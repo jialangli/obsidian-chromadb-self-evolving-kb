@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Brainco 知识库 · 整体技术架构</title>
+<title>自进化知识检索系统 · 整体技术架构</title>
 <style>
 @font-face {
   font-family: "Outfit";
@@ -434,12 +434,12 @@ footer .sources .src-url {
   <!-- ═══════════ Masthead ═══════════ -->
   <header class="masthead">
     <div class="eyebrow">Technical Architecture / 系统架构文档</div>
-    <h1>Brainco 知识库 · 自进化知识检索系统</h1>
+    <h1>自进化知识检索系统</h1>
     <p class="subtitle">基于 Obsidian + ChromaDB 的个人知识库，构建「治理 → 向量化 → 混合检索 → Agent 服务 → 数据飞轮自进化」的完整闭环。本文档为截至 2026-09-03 的整体技术架构全景。</p>
 	    <div class="meta-row">
 	      <span class="meta-chip">版本 <b>v2.5</b></span>
-      <span class="meta-chip">数据层 <b>D:\Desktop\Brainco知识库</b></span>
-      <span class="meta-chip">工程目录 <b>D:\brainco-kb</b></span>
+      <span class="meta-chip">数据层 <b>Obsidian Vault</b></span>
+      <span class="meta-chip">工程目录 <b>./kb-engine</b></span>
       <span class="meta-chip">运行时 <b>Python 3.13 · Windows</b></span>
       <span class="meta-chip">部署形态 <b>纯本地 · 零云依赖</b></span>
     </div>
@@ -459,7 +459,7 @@ footer .sources .src-url {
     <p class="sec-lead">系统分为五个层次，自上而下为：消费层（Agent 调用）→ 服务层（MCP / HTTP 双协议）→ 检索层（混合检索）→ 存储层（ChromaDB 向量库）→ 数据层（Obsidian 知识库）。自进化闭环横跨服务层与存储层，通过反馈数据持续改进检索质量。<sup><a href="#cite-1">[1]</a></sup></p>
     <hr class="sec-rule">
     <figure class="diagram">
-      <figcaption>图 1 · Brainco 知识库总体架构<span>实线为主数据流（查询下行 / 同步上行），虚线为降级与晋升路径</span></figcaption>
+      <figcaption>图 1 · 自进化知识检索系统总体架构<span>实线为主数据流（查询下行 / 同步上行），虚线为降级与晋升路径</span></figcaption>
       <pre class="mermaid">
 flowchart TB
     subgraph C["⑤ 消费层 · Consumers"]
@@ -481,8 +481,8 @@ flowchart TB
 
     subgraph T["② 存储层 · Storage（ChromaDB 持久化）"]
         direction LR
-        CB["brainco_kb_bge<br/>BGE 512d · 2181+ 块"]
-        CL["brainco_kb<br/>LSA 384d · 兜底"]
+        CB["kb_bge<br/>BGE 512d · 2181+ 块"]
+        CL["kb_lsa<br/>LSA 384d · 兜底"]
         CF["bge_ft_vN<br/>候选隔离集合"]
     end
 
@@ -524,7 +524,7 @@ flowchart TB
       <div class="layer-side">
         <div class="layer-index">LAYER 01</div>
         <h3>数据层 · 知识本体</h3>
-        <div class="layer-path">D:\Desktop\Brainco知识库<br>Obsidian Vault</div>
+        <div class="layer-path">Obsidian Vault<br>Obsidian Vault</div>
       </div>
       <ul>
         <li><b>106 篇 Markdown</b> + 4 份赛事规则 PDF，覆盖赛事、教育、产品、用户、竞品、行业、方法论、PRD、复盘、AI 十五大模块（含脑控机器人新品线）</li>
@@ -538,11 +538,11 @@ flowchart TB
       <div class="layer-side">
         <div class="layer-index">LAYER 02</div>
         <h3>存储层 · 向量持久化</h3>
-        <div class="layer-path">D:\brainco-kb\chroma_data<br>ChromaDB + 模型文件</div>
+        <div class="layer-path">./kb-engine\chroma_data<br>ChromaDB + 模型文件</div>
       </div>
       <ul>
-        <li><b>主通道 <code>brainco_kb_bge</code></b>：bge-small-zh-v1.5 神经嵌入，512 维，承载全部 2,181+ 个分块</li>
-        <li><b>兜底通道 <code>brainco_kb</code></b>：LSA（TF-IDF 47,538 维 → TruncatedSVD 384 维），完全离线可用</li>
+        <li><b>主通道 <code>kb_bge</code></b>：bge-small-zh-v1.5 神经嵌入，512 维，承载全部 2,181+ 个分块</li>
+        <li><b>兜底通道 <code>kb_lsa</code></b>：LSA（TF-IDF 47,538 维 → TruncatedSVD 384 维），完全离线可用</li>
         <li><b>候选隔离 <code>bge_ft_vN</code></b>：微调模型的独立评测集合，与线上基线物理隔离</li>
         <li><b>附属产物</b>：<code>lsa_model.pkl</code>（约 155 MB）、<code>tfidf_vectorizer.pkl</code>、<code>chroma.sqlite3</code>（约 130 MB）</li>
         <li>同步管道：中文 2/3-gram 分词 → 按 Heading 切块 → 双通道嵌入 → 全量重建约 30 秒</li>
@@ -553,7 +553,7 @@ flowchart TB
       <div class="layer-side">
         <div class="layer-index">LAYER 03</div>
         <h3>检索层 · 混合检索</h3>
-        <div class="layer-path">D:\brainco-kb\scripts\<br>hybrid_retrieve.py</div>
+        <div class="layer-path">./kb-engine\scripts\<br>hybrid_retrieve.py</div>
       </div>
       <ul>
         <li><b>双通道召回</b>：BGE 语义向量通道（查询加 BGE 指令前缀）+ 纯 Python Okapi BM25 关键词通道</li>
@@ -584,7 +584,7 @@ flowchart TB
         <div class="layer-path">WorkBuddy ~/.workbuddy/mcp.json<br>TRAE / 任意 HTTP Agent</div>
       </div>
       <ul>
-        <li><b>WorkBuddy</b>：已写入 <code>mcp.json</code> 的 <code>brainco-kb</code> 条目，信任后可直接对话式检索</li>
+        <li><b>WorkBuddy</b>：已写入 <code>mcp.json</code> 的 <code>kb-engine</code> 条目，信任后可直接对话式检索</li>
         <li><b>通用 Agent</b>：任何能发 HTTP POST 的程序都可通过 <code>/search</code> 端点接入 RAG 上下文注入</li>
         <li><b>检索结果携带治理元数据</b>（memory_type / status / 来源文件 / 标题路径），Agent 可按可信度引用</li>
         <li>当前飞轮数据：5 条人工反馈，采纳率 66.7%——反馈数据正在为下一次模型微调蓄水</li>
@@ -677,7 +677,7 @@ flowchart TB
         <thead><tr><th>安全机制</th><th>规则</th><th>意义</th></tr></thead>
         <tbody>
           <tr><td>演练默认</td><td>闭环默认 dry-run，仅 <code>--apply</code> 显式触发才写状态</td><td>误操作零风险</td></tr>
-          <tr><td>候选隔离</td><td>微调模型写入独立集合 <code>bge_ft_vN</code>，绝不触碰线上 <code>brainco_kb_bge</code></td><td>实验失败不伤基线</td></tr>
+          <tr><td>候选隔离</td><td>微调模型写入独立集合 <code>bge_ft_vN</code>，绝不触碰线上 <code>kb_bge</code></td><td>实验失败不伤基线</td></tr>
           <tr><td>双重门禁</td><td>离线：Hit at 5 大于等于 0.6 且三项指标无回归；在线：灰度期采纳率 ±2pp / −10pp 决策</td><td>「先证明不坏，再谈变好」</td></tr>
         </tbody>
       </table>
@@ -769,10 +769,10 @@ flowchart TB
   <!-- ═══════════ 07 工程目录与运维 ═══════════ -->
   <section id="s7">
     <div class="sec-head"><span class="sec-num">07</span><h2>工程目录与运维入口</h2></div>
-    <p class="sec-lead">全部工程资产集中于 <code>D:\brainco-kb</code>，与知识本体（Desktop）分离；一键 bat 脚本覆盖日常运维场景。</p>
+    <p class="sec-lead">全部工程资产集中于 <code>./kb-engine</code>，与知识本体（Desktop）分离；一键 bat 脚本覆盖日常运维场景。</p>
     <hr class="sec-rule">
     <div class="code-tree">
-D:\brainco-kb\
+./kb-engine\
 ├── <span class="hl">venv\</span>                        <span class="c"># Python 3.13 虚拟环境（全部依赖离线安装）</span>
 ├── <span class="hl">chroma_data\</span>                 <span class="c"># ChromaDB 持久化 + LSA/TF-IDF 模型</span>
 ├── models\                         <span class="c"># 微调 checkpoint（bge_ft_vN，当前已清理）</span>
@@ -815,19 +815,19 @@ D:\brainco-kb\
       <h2>依据文件</h2>
       <ol>
         <li id="cite-1">
-          <span class="src-title">Phase2_技术文档.md — 架构总览、嵌入方案选型、API 文档与运维手册（D:\brainco-kb）</span>
+          <span class="src-title">Phase2_技术文档.md — 架构总览、嵌入方案选型、API 文档与运维手册（./kb-engine）</span>
           <span class="src-url">本地工程文件</span>
         </li>
         <li id="cite-2">
-          <span class="src-title">治理README.md — 六类治理分类、frontmatter schema、写入策略与演进路线（D:\Desktop\Brainco知识库）</span>
+          <span class="src-title">治理README.md — 六类治理分类、frontmatter schema、写入策略与演进路线（Obsidian Vault）</span>
           <span class="src-url">本地知识库文件</span>
         </li>
         <li id="cite-3">
-          <span class="src-title">scripts\kb_mcp_server.py、closed_loop.py、closed_loop_config.py 等 — 服务工具定义与闭环编排实现（D:\brainco-kb\scripts）</span>
+          <span class="src-title">scripts\kb_mcp_server.py、closed_loop.py、closed_loop_config.py 等 — 服务工具定义与闭环编排实现（./kb-engine\scripts）</span>
           <span class="src-url">本地工程文件</span>
         </li>
         <li id="cite-4">
-          <span class="src-title">logs\mcp_trace.jsonl、feedback.jsonl、closed_loop_runs.jsonl — 调用记录、反馈数据与闭环审计日志（D:\brainco-kb\logs）</span>
+          <span class="src-title">logs\mcp_trace.jsonl、feedback.jsonl、closed_loop_runs.jsonl — 调用记录、反馈数据与闭环审计日志（./kb-engine\logs）</span>
           <span class="src-url">本地工程文件</span>
         </li>
         <li id="cite-5">
