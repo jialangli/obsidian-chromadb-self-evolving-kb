@@ -435,17 +435,17 @@ footer .sources .src-url {
   <header class="masthead">
     <div class="eyebrow">Technical Architecture / 系统架构文档</div>
     <h1>自进化知识检索系统</h1>
-    <p class="subtitle">基于 Obsidian + ChromaDB 的个人知识库，构建「治理 → 向量化 → 混合检索 → Agent 服务 → 数据飞轮自进化」的完整闭环。本文档为截至 2026-09-03 的整体技术架构全景。</p>
+    <p class="subtitle">基于 Obsidian + ChromaDB 的个人知识库，构建「治理 → 向量化 → 混合检索 → Agent 服务 → 数据飞轮自进化」的完整闭环。本文档为截至 Phase 5 的整体技术架构全景。</p>
 	    <div class="meta-row">
-	      <span class="meta-chip">版本 <b>v2.5</b></span>
+	      <span class="meta-chip">版本 <b>v1.0</b></span>
       <span class="meta-chip">数据层 <b>Obsidian Vault</b></span>
       <span class="meta-chip">工程目录 <b>./kb-engine</b></span>
       <span class="meta-chip">运行时 <b>Python 3.13 · Windows</b></span>
       <span class="meta-chip">部署形态 <b>纯本地 · 零云依赖</b></span>
     </div>
     <div class="stat-strip">
-      <div class="stat-card"><div class="num">106</div><div class="label">入库知识文件</div></div>
-      <div class="stat-card"><div class="num">2,181+</div><div class="label">向量分块</div></div>
+      <div class="stat-card"><div class="num">N</div><div class="label">入库知识文件</div></div>
+      <div class="stat-card"><div class="num">M+</div><div class="label">向量分块</div></div>
       <div class="stat-card"><div class="num">512<small>d</small></div><div class="label">BGE 主嵌入通道</div></div>
       <div class="stat-card"><div class="num">5</div><div class="label">MCP 工具</div></div>
       <div class="stat-card"><div class="num">4</div><div class="label">REST API 端点</div></div>
@@ -464,7 +464,7 @@ footer .sources .src-url {
 flowchart TB
     subgraph C["⑤ 消费层 · Consumers"]
         direction LR
-        WB["WorkBuddy<br/>MCP 接入"]
+        WB["MCP 客户端<br/>对话式检索"]
         AG["TRAE / 任意 Agent<br/>HTTP 接入"]
     end
 
@@ -481,14 +481,14 @@ flowchart TB
 
     subgraph T["② 存储层 · Storage（ChromaDB 持久化）"]
         direction LR
-        CB["kb_bge<br/>BGE 512d · 2181+ 块"]
+        CB["kb_bge<br/>BGE 512d · M+ 块"]
         CL["kb_lsa<br/>LSA 384d · 兜底"]
         CF["bge_ft_vN<br/>候选隔离集合"]
     end
 
     subgraph D["① 数据层 · Data"]
         direction LR
-        OV["Obsidian Vault<br/>106 md · 六类治理"]
+        OV["Obsidian Vault<br/>Markdown · 多分类治理"]
         SY["同步脚本<br/>中文 n-gram · 分块"]
     end
 
@@ -527,9 +527,9 @@ flowchart TB
         <div class="layer-path">Obsidian Vault<br>Obsidian Vault</div>
       </div>
       <ul>
-        <li><b>106 篇 Markdown</b> + 4 份赛事规则 PDF，覆盖赛事、教育、产品、用户、竞品、行业、方法论、PRD、复盘、AI 十五大模块（含脑控机器人新品线）</li>
-        <li><b>六类治理 frontmatter</b>：<code>fact</code> / <code>preference</code> / <code>experience</code> / <code>safety</code> / <code>task_state</code> / <code>navigation</code>，每类有专属必填字段（来源、决策者、教训、负责人等）<sup><a href="#cite-2">[2]</a></sup></li>
-        <li><b>12 项 Dataview 治理查询</b>：过期事实、即将过期、未标注来源、低可信度、长期未更新等自动巡检面板</li>
+        <li>自定义 Markdown 笔记 + PDF/网页等知识文件，覆盖产品、技术、运营、市场、方法论等可自定义的知识分类</li>
+        <li><b>多类型治理 frontmatter</b>：<code>fact</code> / <code>preference</code> / <code>experience</code> / <code>safety</code> / <code>task_state</code> / <code>navigation</code>，每类有专属必填字段（来源、决策者、教训、负责人等）<sup><a href="#cite-2">[2]</a></sup></li>
+        <li><b>多项 Dataview 治理查询</b>：过期事实、即将过期、未标注来源、低可信度、长期未更新等自动巡检面板</li>
         <li><b>写入门槛策略</b>：只写稳定事实与已验证经验；事实变更不覆盖、标记废弃后另建新笔记</li>
       </ul>
     </div>
@@ -541,8 +541,8 @@ flowchart TB
         <div class="layer-path">./kb-engine\chroma_data<br>ChromaDB + 模型文件</div>
       </div>
       <ul>
-        <li><b>主通道 <code>kb_bge</code></b>：bge-small-zh-v1.5 神经嵌入，512 维，承载全部 2,181+ 个分块</li>
-        <li><b>兜底通道 <code>kb_lsa</code></b>：LSA（TF-IDF 47,538 维 → TruncatedSVD 384 维），完全离线可用</li>
+        <li><b>主通道 <code>kb_bge</code></b>：bge-small-zh-v1.5 神经嵌入，512 维，承载全部分块</li>
+        <li><b>兜底通道 <code>kb_lsa</code></b>：LSA（TF-IDF 高维稀疏 → TruncatedSVD 降维），完全离线可用</li>
         <li><b>候选隔离 <code>bge_ft_vN</code></b>：微调模型的独立评测集合，与线上基线物理隔离</li>
         <li><b>附属产物</b>：<code>lsa_model.pkl</code>（约 155 MB）、<code>tfidf_vectorizer.pkl</code>、<code>chroma.sqlite3</code>（约 130 MB）</li>
         <li>同步管道：中文 2/3-gram 分词 → 按 Heading 切块 → 双通道嵌入 → 全量重建约 30 秒</li>
@@ -572,7 +572,7 @@ flowchart TB
       <ul>
         <li><b>MCP Server</b>（stdio，mcp 2.1.1 SDK）提供 5 个工具：<code>search_knowledge_base</code>（语义检索）、<code>filter_knowledge_base</code>（元数据过滤）、<code>knowledge_base_stats</code>（库统计）、<code>record_retrieval_feedback</code>（采纳标记）、<code>feedback_stats</code>（飞轮统计）<sup><a href="#cite-3">[3]</a></sup></li>
         <li><b>FastAPI</b>（127.0.0.1:8300）提供 4 个端点：<code>/stats</code>、<code>/search</code>、<code>/filter</code>、<code>/sync</code>，附 Swagger 文档</li>
-        <li><b>可观测性</b>：每次 MCP 调用追加写入 <code>mcp_trace.jsonl</code>（时间戳 / 工具 / 参数 / 结果摘要），已积累 60+ 条调用记录</li>
+        <li><b>可观测性</b>：每次 MCP 调用追加写入 <code>mcp_trace.jsonl</code>（时间戳 / 工具 / 参数 / 结果摘要），持续积累调用记录</li>
         <li><b>进程保障</b>：api_guard 守护 + 启动文件夹 VBS 静默自启，端口占用时新实例自动退出</li>
       </ul>
     </div>
@@ -581,13 +581,13 @@ flowchart TB
       <div class="layer-side">
         <div class="layer-index">LAYER 05</div>
         <h3>消费层 · Agent 接入</h3>
-        <div class="layer-path">WorkBuddy ~/.workbuddy/mcp.json<br>TRAE / 任意 HTTP Agent</div>
+        <div class="layer-path">MCP 客户端配置<br>TRAE / 任意 HTTP Agent</div>
       </div>
       <ul>
-        <li><b>WorkBuddy</b>：已写入 <code>mcp.json</code> 的 <code>kb-engine</code> 条目，信任后可直接对话式检索</li>
+        <li><b>MCP 客户端</b>：在 <code>mcp.json</code> 中添加 <code>kb-engine</code> 条目，信任后即可对话式检索</li>
         <li><b>通用 Agent</b>：任何能发 HTTP POST 的程序都可通过 <code>/search</code> 端点接入 RAG 上下文注入</li>
         <li><b>检索结果携带治理元数据</b>（memory_type / status / 来源文件 / 标题路径），Agent 可按可信度引用</li>
-        <li>当前飞轮数据：5 条人工反馈，采纳率 66.7%——反馈数据正在为下一次模型微调蓄水</li>
+        <li>飞轮数据：持续收集中——反馈数据积累到阈值后自动触发模型微调</li>
       </ul>
     </div>
   </section>
@@ -598,7 +598,7 @@ flowchart TB
     <p class="sec-lead">一次查询的完整生命周期：查询预处理 → 双通道并行召回 → RRF 融合排序 → 返回带治理元数据的结果 → Agent 采纳反馈回流。<sup><a href="#cite-1">[1]</a></sup></p>
     <hr class="sec-rule">
     <figure class="diagram">
-      <figcaption>图 2 · 单次查询的检索流水线<span>向量通道负责语义泛化，BM25 通道负责「能源塔 V6.2」这类专有名词的精确匹配</span></figcaption>
+      <figcaption>图 2 · 单次查询的检索流水线<span>向量通道负责语义泛化，BM25 通道负责「产品型号 Vx.x」这类专有名词的精确匹配</span></figcaption>
       <pre class="mermaid">
 flowchart LR
     Q["用户查询"] --> PRE["预处理<br/>BGE 指令前缀<br/>中文 n-gram"]
@@ -684,8 +684,8 @@ flowchart TB
     </div>
 
     <div class="callout">
-      <p><b>当前运行状态（2026-09-03）：</b>线上以基线模型（BGE 主通道）运行，<code>active_model.json</code> 未启用灰度。闭环已完成首次全链路演练——2 条三元组微调候选在离线门禁被拦截（MRR 相对基线 −0.0036，触发「无回归」红线），系统自动回滚并保留基线。<b>这正是门禁机制按设计工作的证明</b>：小样本微调带来的波动被安全闸挡在线上之外。</p>
-      <p>飞轮目前 2/8 条正例，今日新增脑控机器人产品手册入库，继续正常使用检索并标记采纳，即可积累到自动训练触发阈值。</p>
+      <p><b>运行机制说明：</b>线上默认以基线模型（BGE 主通道）运行，<code>active_model.json</code> 控制灰度切换。自进化闭环支持 dry-run 演练模式——候选模型在离线门禁被拦截时，系统自动回滚并保留基线。<b>门禁机制按设计工作：</b>小样本微调带来的波动被安全闸挡在线上之外。</p>
+      <p>正常使用检索并标记采纳，反馈数据持续积累，达到阈值后自动触发训练流程。</p>
     </div>
   </section>
 
@@ -701,12 +701,12 @@ flowchart TB
           <tr>
             <td>嵌入模型</td>
             <td><span class="tag ok">主线</span>bge-small-zh-v1.5 · 512d<br><span class="tag warn">兜底</span>LSA（TF-IDF + SVD）· 384d</td>
-            <td>ChromaDB 默认 ONNX MiniLM（模型下载损坏且为英文）；HuggingFace 多语言模型（直连与镜像均 SSL 中断）；TF-IDF 直接截断（47K→384 维导致查询向量退化为零向量）</td>
+            <td>ChromaDB 默认 ONNX MiniLM（模型下载损坏且为英文）；HuggingFace 多语言模型（直连与镜像均 SSL 中断）；TF-IDF 直接截断（高维降维导致查询向量退化为零向量）</td>
           </tr>
           <tr>
             <td>检索策略</td>
             <td><span class="tag ok">主线</span>双通道 + RRF 融合</td>
-            <td>纯向量检索（专有名词如「能源塔 V6.2」召回差）；纯关键词检索（语义泛化弱）——混合方案两者兼得</td>
+            <td>纯向量检索（专有名词如「产品型号 Vx.x」召回差）；纯关键词检索（语义泛化弱）——混合方案两者兼得</td>
           </tr>
           <tr>
             <td>微调实现</td>
@@ -740,28 +740,28 @@ flowchart TB
     <hr class="sec-rule">
     <div class="timeline">
       <div class="tl-item">
-        <div class="tl-time">2026-09-01 上午</div>
+        <div class="tl-time">Phase 1</div>
         <h4>Phase 1 · 治理框架</h4>
-        <p>六类 memory_type frontmatter schema + 六套治理模板 + 12 项 Dataview 巡检查询，元数据覆盖率 106/106。确立「治理能力决定自进化上限」的基调。</p>
+        <p>memory_type frontmatter schema + 治理模板 + Dataview 巡检查询，元数据覆盖率可逐步达到 100%。确立「治理能力决定自进化上限」的基调。</p>
       </div>
       <div class="tl-item">
-        <div class="tl-time">2026-09-01 下午</div>
+        <div class="tl-time">Phase 2</div>
         <h4>Phase 2 · 语义检索服务</h4>
-        <p>LSA（TF-IDF + SVD）+ ChromaDB（702 块）+ FastAPI 检索服务上线，配置 VBS 开机自启。在网络受限环境下先跑通完整链路。</p>
+        <p>LSA（TF-IDF + SVD）+ ChromaDB（初始分块）+ FastAPI 检索服务上线，配置 VBS 开机自启。跑通完整检索链路。</p>
       </div>
       <div class="tl-item">
-        <div class="tl-time">2026-09-01 晚间</div>
+        <div class="tl-time">Phase 2.5 + 3</div>
         <h4>Phase 2.5 + Phase 3 · 检索升级与 MCP</h4>
-        <p>BGE 神经嵌入落地（模型缓存成功后切换），块粒度细化至 1,562 块；BM25 + RRF 混合检索上线；MCP Server 封装 5 工具并接入 WorkBuddy，trace 日志开始积累。</p>
+        <p>BGE 神经嵌入落地，块粒度细化；BM25 + RRF 混合检索上线；MCP Server 封装工具集并接入 MCP 客户端，trace 日志开始积累。</p>
       </div>
             <div class="tl-item">
-        <div class="tl-time">2026-09-03</div>
+        <div class="tl-time">Phase 5</div>
         <h4>Phase 5 · 知识库扩容与索引同步</h4>
-        <p>新增脑控机器人产品线（强脑科技-脑控机器人产品手册 PDF 入库），知识库从 97 文件增至 106 文件。同步更新产品手册首页索引，向量库待触发全量重建同步。</p>
+        <p>知识库扩容与索引同步：新增知识文件后触发全量重建，索引与内容保持一致。</p>
       </div>      
       </div>
         <h4>Phase 4 · 自进化闭环</h4>
-        <p>反馈工具（record_retrieval_feedback / feedback_stats）+ 五个闭环脚本（数据集 / 微调 / 候选构建 / 评估 / 编排）+ AB 监控全部落地。10:29 完成首次 dry-run 全链路演练：门禁拦截回归候选 → 自动回滚，安全机制验证通过。</p>
+        <p>反馈工具（record_retrieval_feedback / feedback_stats）+ 五个闭环脚本（数据集 / 微调 / 候选构建 / 评估 / 编排）+ AB 监控全部落地。完成 dry-run 全链路演练：门禁拦截回归候选 → 自动回滚，安全机制验证通过。</p>
       </div>
     </div>
   </section>
@@ -819,7 +819,7 @@ flowchart TB
           <span class="src-url">本地工程文件</span>
         </li>
         <li id="cite-2">
-          <span class="src-title">治理README.md — 六类治理分类、frontmatter schema、写入策略与演进路线（Obsidian Vault）</span>
+          <span class="src-title">治理 README.md — 治理分类、frontmatter schema、写入策略与演进路线（Obsidian Vault）</span>
           <span class="src-url">本地知识库文件</span>
         </li>
         <li id="cite-3">

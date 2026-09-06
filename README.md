@@ -34,7 +34,7 @@ cd obsidian-chromadb-self-evolving-kb
 ## 架构概览
 
 ```
-⑤ 消费层 · Consumers        WorkBuddy (MCP) / TRAE / 任意 HTTP Agent
+⑤ 消费层 · Consumers        MCP 客户端 / TRAE / 任意 HTTP Agent
 ④ 服务层 · Services         MCP Server (stdio, 5 tools) + FastAPI (:8300, 4 endpoints)
 ③ 检索层 · Retrieval        Hybrid Retriever (BGE + BM25 → RRF)
 ② 存储层 · Storage           ChromaDB (kb_bge 512d 主通道 / kb_lsa 384d 兜底)
