@@ -19,7 +19,7 @@
 
 直接在浏览器中打开 [`index.html`](./index.html) 即可查看完整架构文档（含 Mermaid 流程图、数据表格、演进时间线）。
 
-或访问 GitHub Pages 在线版（启用后自动生成）。
+或访问 GitHub Pages 在线版：https://jialangli.github.io/obsidian-chromadb-self-evolving-kb/
 
 ### 本地运行
 
