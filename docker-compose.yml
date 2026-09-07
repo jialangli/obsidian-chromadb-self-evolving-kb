@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  kb-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kb-engine
+    restart: unless-stopped
+    ports:
+      - "8300:8300"
+    volumes:
+      # 挂载你的 Obsidian Vault（只读）
+      - ./vault:/app/vault:ro
+      # 持久化数据（向量库、日志、模型）
+      - kb_data:/app/data
+    environment:
+      - KB_VAULT_PATH=/app/vault
+      - KB_CHROMA_PATH=/app/data/chroma
+      - KB_LOG_PATH=/app/data/logs
+      - KB_MODELS_DIR=/app/data/models
+      - KB_API_HOST=0.0.0.0
+      - KB_API_PORT=8300
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8300/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  kb_data:

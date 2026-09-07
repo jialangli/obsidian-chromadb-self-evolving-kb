@@ -1,5 +1,12 @@
 # Obsidian + ChromaDB 自进化知识检索系统
 
+[![CI](https://img.shields.io/github/actions/workflow/status/jialangli/obsidian-chromadb-self-evolving-kb/ci.yml?branch=master&label=CI&logo=github)](https://github.com/jialangli/obsidian-chromadb-self-evolving-kb/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/jialangli/obsidian-chromadb-self-evolving-kb?color=blue)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![GitHub stars](https://img.shields.io/github/stars/jialangli/obsidian-chromadb-self-evolving-kb?style=social)](https://github.com/jialangli/obsidian-chromadb-self-evolving-kb/stargazers)
+
 基于 **Obsidian + ChromaDB** 的个人知识库检索架构，构建「治理 → 向量化 → 混合检索 → Agent 服务 → 数据飞轮自进化」的完整闭环。
 
 纯本地运行，零云依赖。任何时刻删除向量索引，都能通过同步脚本在 30 秒内完整恢复。
@@ -50,14 +57,44 @@ python -m kb_engine.kb_api_server
 # 浏览器打开 http://localhost:8300/docs 查看 API 文档
 ```
 
-安装后也可以直接用 CLI 命令：
+安装后也可以直接用统一 CLI：
 
 ```bash
-kb-sync --full     # 等同于 python -m kb_engine.sync_obsidian_to_chroma
-kb-api             # 等同于 python -m kb_engine.kb_api_server
-kb-audit           # 等同于 python -m kb_engine.kb_audit
-kb-eval            # 等同于 python -m kb_engine.eval_retrieval
+kb sync --full       # 同步知识库（全量）
+kb api               # 启动 HTTP API
+kb audit             # 知识库体检
+kb eval              # 检索效果评估
+kb stats             # 查看统计
+kb --version         # 版本号
 ```
+
+### Docker 部署
+
+如果你更喜欢用 Docker，一键启动：
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/jialangli/obsidian-chromadb-self-evolving-kb.git
+cd obsidian-chromadb-self-evolving-kb
+
+# 2. 将你的 Obsidian Vault 软链接或复制到 ./vault 目录
+#    ln -s /path/to/your/vault ./vault    # macOS/Linux
+#    mklink /D vault C:\path\to\your\vault  # Windows
+
+# 3. 构建并启动
+docker compose up -d --build
+
+# 4. 浏览器打开
+#    http://localhost:8300/docs
+```
+
+数据持久化在 Docker 卷 `kb_data` 中，包含向量库、日志和模型文件。
+
+> 也可以直接 `docker run`：
+> ```bash
+> docker build -t kb-engine .
+> docker run -p 8300:8300 -v /path/to/vault:/app/vault:ro -v kb_data:/app/data kb-engine
+> ```
 
 ### 接入 MCP 客户端
 
@@ -83,17 +120,27 @@ obsidian-chromadb-self-evolving-kb/
 ├── README.md                   # 项目说明（本文件）
 ├── CHANGELOG.md                # 版本变更记录
 ├── CONTRIBUTING.md             # 贡献指南
+├── SECURITY.md                 # 安全政策
 ├── LICENSE                     # MIT License
 ├── pyproject.toml              # 项目配置（依赖、构建、工具）
 ├── requirements.txt            # 运行时依赖清单
 ├── config.example.yaml         # 配置模板
 ├── quickstart.py               # 一键快速入门脚本
+├── Makefile                    # 常用命令封装
+├── Dockerfile                  # Docker 镜像
+├── docker-compose.yml          # Docker Compose 编排
+├── .dockerignore
 ├── .pre-commit-config.yaml     # pre-commit 钩子配置
 ├── .gitignore
 │
 ├── .github/
-│   └── workflows/
-│       └── ci.yml              # GitHub Actions CI 工作流
+│   ├── workflows/
+│   │   └── ci.yml              # GitHub Actions CI 工作流
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.md       # Bug 报告模板
+│   │   ├── feature_request.md  # 功能建议模板
+│   │   └── question.md         # 问题求助模板
+│   └── PULL_REQUEST_TEMPLATE.md # PR 模板
 │
 ├── src/kb_engine/              # 主包（src layout）
 │   ├── __init__.py             # 包初始化，暴露 settings 和版本
@@ -265,6 +312,40 @@ pytest --cov=kb_engine --cov-report=term-missing
 配置文件：`.github/workflows/ci.yml`
 
 更多开发规范请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## Makefile 速查
+
+项目提供了 `Makefile` 封装常用命令（macOS / Linux / WSL 可用）：
+
+```bash
+make help              # 查看所有命令
+make install           # 安装运行时依赖
+make install-dev       # 安装开发依赖 + pre-commit
+make sync              # 同步知识库
+make sync-full         # 全量重建索引
+make api               # 启动 API 服务
+make test              # 运行测试
+make test-cov          # 测试 + 覆盖率
+make lint              # 代码检查
+make format            # 代码格式化
+make docker-build      # 构建 Docker 镜像
+make docker-up         # 启动 Docker 容器
+make docker-down       # 停止 Docker 容器
+make clean             # 清理缓存
+```
+
+## Docker
+
+详见 [Docker 部署](#docker-部署) 章节。
+
+- `Dockerfile`：多阶段构建，生产级镜像
+- `docker-compose.yml`：一键编排，数据卷持久化
+- `.dockerignore`：优化构建上下文
+
+## 安全
+
+发现安全漏洞？请查看 [SECURITY.md](./SECURITY.md) 了解报告方式。
+**请勿**通过公开 Issue 报告安全问题。
 
 ## 版本历史
 

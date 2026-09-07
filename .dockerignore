@@ -1,0 +1,30 @@
+# kb_engine
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 数据
+data/
+*.sqlite3
+*.pkl
+*.jsonl
+*.log
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# 配置
+config.yaml
+
+# OS
+.DS_Store
+Thumbs.db
