@@ -96,6 +96,20 @@ def main(argv: list = None):
     print(f"Hit@5: {a[1]}/{len(CASES)} -> {b[1]}/{len(CASES)}  ({(b[1]-a[1])*100//len(CASES):+d}%)")
     print(f"MRR  : {a[2]:.3f} -> {b[2]:.3f}  ({b[2]-a[2]:+.3f})")
 
+    # 两阶段 Rerank 对比：仅当 cross-encoder reranker 实际可用时展示增益
+    if r.reranker is not None and r.reranker.available:
+        print("\n===== 两阶段 Rerank (RRF → bge-reranker-base → Top-K) =====")
+        r_norer = HybridRetriever(enable_rerank=False)
+        c = evaluate(
+            r_norer, "对照 · 仅 RRF（关闭 rerank）", lambda q, top_k: r_norer.search(q, top_k=top_k)
+        )
+        print(f"RRF Hit@5        : {c[1]}/{len(CASES)}  (MRR {c[2]:.3f})")
+        print(f"RRF+rerank Hit@5 : {b[1]}/{len(CASES)}  (MRR {b[2]:.3f})")
+        print(f"Rerank 增益 Hit@5: {(b[1]-c[1])*100//len(CASES):+d}%   MRR {b[2]-c[2]:+.3f}")
+    else:
+        print("\n[提示] reranker 未启用/不可用（sentence_transformers 未安装或模型未下载），"
+              "本次仅评估 RRF；装好依赖后重跑可看到两阶段重排增益。")
+
 
 if __name__ == "__main__":
     main()

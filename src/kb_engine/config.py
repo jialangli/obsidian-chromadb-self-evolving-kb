@@ -40,6 +40,11 @@ DEFAULTS = {
     # 检索
     "top_k": 10,
     "rrf_k": 60,
+    "vector_weight": 1.0,
+    "bm25_weight": 1.0,
+    "enable_rerank": True,
+    "rerank_model": "BAAI/bge-reranker-base",
+    "rerank_top_k": 50,
     "chunk_size": 1500,
     "chunk_overlap": 200,
     # 服务

@@ -36,9 +36,13 @@ from kb_engine.sync_obsidian_to_chroma import (
 )
 
 # ── 可调参数 ──────────────────────────────────────────
+from kb_engine.config import settings  # 复用全局配置（rrf_k / 通道权重 / rerank 开关）
+
 BM25_K1 = 1.5
 BM25_B = 0.75
-RRF_K = 60
+RRF_K = settings.rrf_k  # RRF 常数 k，可经 config.yaml / KB_RRF_K 覆盖
+VECTOR_WEIGHT = settings.vector_weight  # 向量通道融合权重
+BM25_WEIGHT = settings.bm25_weight  # 关键词通道融合权重
 CANDIDATE_POOL = 50  # 每个通道取前 N 个候选进入融合
 QUERY_EXCERPT_LEN = 200
 
@@ -49,45 +53,46 @@ def _norm_query(query: str) -> str:
 
 
 class BM25Index:
-    """纯 Python Okapi BM25，内存索引，从 chunk 全文构建。"""
+    """纯 Python Okapi BM25，内存索引，从 chunk 全文构建。
+
+    用倒排表（term -> [(doc_idx, tf)]）而不是逐文档扫描：
+    原实现对每个查询都要遍历全部文档再逐词查表，复杂度 O(文档数 × 查询词数)；
+    改为只遍历命中词的倒排链后降到 O(命中文档数)，大库上差距是数量级的。
+    """
 
     def __init__(self, corpus_tokens: list):
         self.doc_tokens = corpus_tokens
         self.doc_len = [len(t) for t in corpus_tokens]
         self.n_docs = len(corpus_tokens)
         self.avgdl = (sum(self.doc_len) / self.n_docs) if self.n_docs else 0.0
-        self.tf = []  # 每篇 {term: freq}
         self.df = {}  # term -> 含该 term 的文档数
-        for tokens in corpus_tokens:
+        self.postings = {}  # term -> [(doc_idx, tf), ...]
+        for i, tokens in enumerate(corpus_tokens):
             tf = {}
             for tok in tokens:
                 tf[tok] = tf.get(tok, 0) + 1
-            self.tf.append(tf)
-            for tok in tf:
+            for tok, freq in tf.items():
                 self.df[tok] = self.df.get(tok, 0) + 1
+                self.postings.setdefault(tok, []).append((i, freq))
         self.idf = {}
         for tok, df in self.df.items():
             self.idf[tok] = math.log(1 + (self.n_docs - df + 0.5) / (df + 0.5))
 
     def score(self, query_tokens: list) -> list:
         """返回 [(doc_idx, score), ...]，只含命中至少一个查询词的文档。"""
-        scores = []
-        qset = set(query_tokens)
-        for i in range(self.n_docs):
-            s = 0.0
-            tf_i = self.tf[i]
-            dl = self.doc_len[i] or 1
-            denom_base = BM25_K1 * (1 - BM25_B + BM25_B * dl / (self.avgdl or 1))
-            for tok in qset:
-                f = tf_i.get(tok)
-                if not f:
-                    continue
-                idf = self.idf.get(tok, 0.0)
-                s += idf * (f * (BM25_K1 + 1)) / (f + denom_base)
-            if s > 0:
-                scores.append((i, s))
-        scores.sort(key=lambda x: x[1], reverse=True)
-        return scores
+        scores = {}
+        for tok in set(query_tokens):
+            idf = self.idf.get(tok)
+            if not idf:
+                continue
+            for i, f in self.postings.get(tok, ()):
+                dl = self.doc_len[i] or 1
+                denom = BM25_K1 * (1 - BM25_B + BM25_B * dl / (self.avgdl or 1))
+                scores[i] = scores.get(i, 0.0) + idf * (f * (BM25_K1 + 1)) / (f + denom)
+        ranked = [(i, s) for i, s in scores.items() if s > 0]
+        # 分数相同时按 doc_idx 升序，保证排序结果确定（dict 的插入顺序不是文档序）
+        ranked.sort(key=lambda x: (-x[1], x[0]))
+        return ranked
 
 
 class HybridRetriever:
@@ -107,16 +112,28 @@ class HybridRetriever:
         vectorizer_path=VECTORIZER_PATH,
         bge_collection_name=COLLECTION_NAME_BGE,
         bge_embedder=None,
+        enable_rerank=None,
+        rerank_model=None,
+        rerank_top_k=None,
+        vector_weight=None,
+        bm25_weight=None,
     ):
         self._chroma_path = chroma_path
         self._collection_name = collection_name
         self._vectorizer_path = vectorizer_path
         self._bge_collection_name = bge_collection_name
         self._bge_embedder_override = bge_embedder
+        # 两阶段重排相关配置（None 表示走全局 settings 默认值）
+        self._enable_rerank = settings.enable_rerank if enable_rerank is None else enable_rerank
+        self._rerank_model = settings.rerank_model if rerank_model is None else rerank_model
+        self._rerank_top_k = settings.rerank_top_k if rerank_top_k is None else rerank_top_k
+        self._vector_weight = settings.vector_weight if vector_weight is None else vector_weight
+        self._bm25_weight = settings.bm25_weight if bm25_weight is None else bm25_weight
         self.embedder = None
         self.collection = None
         self.bge = None
         self.vector_mode = "lsa"
+        self.reranker = None
         self._model_mtime = 0
         self._load()
 
@@ -188,6 +205,18 @@ class HybridRetriever:
             corpus.append(_norm_query(f"{src} {fn} {d or ''}"))
         self.bm25 = BM25Index(corpus)
 
+        # 两阶段重排：在 RRF 之后用 cross-encoder 重排候选。
+        # 无 sentence_transformers 或模型未下载时自动降级（available=False），
+        # search() 会跳过 rerank 沿用 RRF 结果。
+        self.reranker = None
+        if self._enable_rerank:
+            try:
+                from kb_engine.rerank import BgeReranker
+
+                self.reranker = BgeReranker(self._rerank_model)
+            except Exception:
+                self.reranker = None
+
     def _refresh_if_stale(self):
         try:
             if Path(self._vectorizer_path).stat().st_mtime != self._model_mtime:
@@ -227,6 +256,51 @@ class HybridRetriever:
             "excerpt": (doc or "")[:QUERY_EXCERPT_LEN],
         }
 
+    def _search_vector(self, query: str, where: dict, pool: int) -> dict:
+        """向量通道（bge 神经语义优先，回退 LSA）。
+
+        Returns: {chunk_id: (rank, dist)}，dist = 1 - cos，下游 sim = 1 - dist。
+        """
+        if self.vector_mode == "bge" and self.bge is not None:
+            qv = self.bge.encode_query(query)
+        else:
+            qv = self.embedder.transform([query])[0]
+        sims = self.vecs @ qv
+        cand = [
+            (di, float(sims[di]))
+            for di in range(len(self.ids))
+            if self._match(self.metas[di], where)
+        ]
+        cand.sort(key=lambda x: x[1], reverse=True)
+        return {self.ids[di]: (rank, 1.0 - s) for rank, (di, s) in enumerate(cand[:pool])}
+
+    def _search_bm25(self, query: str, where: dict, pool: int) -> dict:
+        """关键词通道。Returns: {chunk_id: (rank, bm25_score)}"""
+        qt = _norm_query(query)
+        flat = [
+            (di, sc) for di, sc in self.bm25.score(qt) if self._match(self.metas[di], where)
+        ]
+        return {self.ids[di]: (rank, sc) for rank, (di, sc) in enumerate(flat[:pool])}
+
+    @staticmethod
+    def _rrf_fuse(vec_rank: dict, kw_rank: dict, rrf_k: float = RRF_K,
+                  vec_w: float = VECTOR_WEIGHT, kw_w: float = BM25_WEIGHT) -> dict:
+        """RRF 融合（支持向量/关键词通道加权）。
+
+        Returns: {chunk_id: [rrf_score, sim_or_None, bm25_or_None]}
+        """
+        fused = {}
+        for cid, (rank, dist) in vec_rank.items():
+            fused[cid] = [vec_w * 1.0 / (rrf_k + rank + 1), 1 - dist, None]
+        for cid, (rank, sc) in kw_rank.items():
+            rrf = kw_w * 1.0 / (rrf_k + rank + 1)
+            if cid in fused:
+                fused[cid][0] += rrf
+                fused[cid][2] = sc
+            else:
+                fused[cid] = [rrf, None, sc]
+        return fused
+
     def search(
         self,
         query: str,
@@ -240,49 +314,33 @@ class HybridRetriever:
         where = where or {}
         pool = CANDIDATE_POOL
 
-        # 向量通道（bge 神经语义 优先，回退 LSA；内存余弦，均吃文件名增强）
-        vec_rank = {}
-        if not bm25_only:
-            if self.vector_mode == "bge" and self.bge is not None:
-                qv = self.bge.encode_query(query)
-            else:
-                qv = self.embedder.transform([query])[0]
-            sims = self.vecs @ qv
-            cand = []
-            for di in range(len(self.ids)):
-                if self._match(self.metas[di], where):
-                    cand.append((di, float(sims[di])))
-            cand.sort(key=lambda x: x[1], reverse=True)
-            for rank, (di, s) in enumerate(cand[:pool]):
-                vec_rank[self.ids[di]] = (rank, 1.0 - s)  # dist=1-cos，下游 sim=1-dist 保持正确
+        vec_rank = {} if bm25_only else self._search_vector(query, where, pool)
+        kw_rank = {} if vector_only else self._search_bm25(query, where, pool)
+        fused = self._rrf_fuse(vec_rank, kw_rank, rrf_k=RRF_K,
+                               vec_w=self._vector_weight, kw_w=self._bm25_weight)
 
-        # 关键词通道（BM25）
-        kw_rank = {}
-        if not vector_only:
-            qt = _norm_query(query)
-            flat = []  # (doc_idx, score) 已按分数降序
-            for di, sc in self.bm25.score(qt):
-                if self._match(self.metas[di], where):
-                    flat.append((di, sc))
-            for rank, (di, sc) in enumerate(flat[:pool]):
-                kw_rank[self.ids[di]] = (rank, sc)
-
-        # 融合（RRF）
-        fused = {}
-        for cid, (rank, dist) in vec_rank.items():
-            rrf = 1.0 / (RRF_K + rank + 1)
-            sim = 1 - dist
-            fused[cid] = [rrf, sim, None]
-        for cid, (rank, sc) in kw_rank.items():
-            rrf = 1.0 / (RRF_K + rank + 1)
-            if cid in fused:
-                fused[cid][0] += rrf
-                fused[cid][2] = sc
-            else:
-                fused[cid] = [rrf, None, sc]
-
-        ranked = sorted(fused.items(), key=lambda kv: kv[1][0], reverse=True)[:top_k]
-        return [self._make_hit(cid, v[0], v[1], v[2]) for cid, v in ranked]
+        ranked = sorted(fused.items(), key=lambda kv: kv[1][0], reverse=True)
+        # 两阶段重排：RRF 前 N 个候选 → cross-encoder 打分 → Top-K。
+        # 仅当 reranker 可用且候选多于所需时介入；否则直接返回 RRF 结果。
+        if (self._enable_rerank and self.reranker is not None and self.reranker.available
+                and len(ranked) > top_k):
+            cand = ranked[: self._rerank_top_k]
+            cand_ids = [cid for cid, _ in cand]
+            cand_docs = [self.docs[self._id_pos[cid]] for cid in cand_ids]
+            try:
+                reranked = self.reranker.rerank(query, cand_docs, top_k=top_k)
+                result = []
+                for idx, score in reranked:
+                    cid = cand_ids[idx]
+                    v = cand[idx][1]
+                    hit = self._make_hit(cid, v[0], v[1], v[2])
+                    hit["rerank_score"] = round(score, 5)
+                    result.append(hit)
+                return result
+            except Exception:
+                # rerank 异常（如内存不足）时回退 RRF，保证检索可用性
+                pass
+        return [self._make_hit(cid, v[0], v[1], v[2]) for cid, v in ranked[:top_k]]
 
     def search_legacy(self, query: str, top_k: int = 5, where: dict = None):
         """原始行为（改造前基线）：直接用向量库里旧存向量 collection.query。"""
