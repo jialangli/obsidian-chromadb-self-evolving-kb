@@ -2,7 +2,7 @@
 memory_type: experience
 status: active
 source: practice
-confidence: high
+confidence: 0.9
 tags: [技术, RAG, 知识库]
 date_created: 2026-02-15
 date_updated: 2026-08-20

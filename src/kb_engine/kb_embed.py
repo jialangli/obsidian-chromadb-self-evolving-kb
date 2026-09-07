@@ -78,7 +78,15 @@ class BgeEmbedder:
 
 
 def available() -> bool:
-    """纯本地探测：模型关键文件是否已在 HF 缓存中（不联网、不触发下载）"""
+    """纯本地探测：模型关键文件是否已在 HF 缓存中（不联网、不触发下载）
+
+    注意要同时确认 sentence_transformers 可用 —— 只查 HF 缓存会出现
+    「权重在、加载器不在」，于是先打印"加载 bge"再在下一行失败，误导排查。
+    """
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        return False
     try:
         from huggingface_hub import try_to_load_from_cache
 

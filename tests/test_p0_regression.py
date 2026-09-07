@@ -98,13 +98,22 @@ def test_example_vault_matches_eval_cases():
 
 
 def test_closed_loop_paths_are_portable():
-    """闭环路径不得硬编码本机盘符"""
+    """闭环路径必须派生自项目根，不能写死某台机器的绝对路径（曾写死 D:\\kb-engine）"""
+    import os
+
     import kb_engine.closed_loop_config as cfg
 
+    override = os.environ.get("KB_ROOT")
     for name in ("KB_ROOT", "LOGS", "MODELS_DIR", "FEEDBACK_PATH", "TRACE_PATH"):
-        value = str(getattr(cfg, name))
-        assert not re.match(r"^[A-Za-z]:[\\/]", value), f"{name} 硬编码了盘符: {value}"
-        assert not value.startswith("/Users/"), f"{name} 硬编码了用户目录: {value}"
+        value = Path(str(getattr(cfg, name)))
+        assert "kb-engine" not in value.parts or override, (
+            f"{name} 疑似硬编码了本机路径: {value}"
+        )
+        if not override:
+            # 未用 KB_ROOT 覆盖时，必须落在项目根之下（即随仓库迁移）
+            assert str(PROJECT_ROOT.resolve()) in str(value.resolve()), (
+                f"{name} 未派生自项目根: {value}"
+            )
 
 
 def test_closed_loop_uses_same_collection_as_sync():

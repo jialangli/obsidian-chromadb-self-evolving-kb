@@ -2,7 +2,7 @@
 memory_type: experience
 status: active
 source: ops_doc
-confidence: high
+confidence: 0.9
 tags: [运营, FAQ, 故障排查]
 date_created: 2026-03-05
 date_updated: 2026-08-20
