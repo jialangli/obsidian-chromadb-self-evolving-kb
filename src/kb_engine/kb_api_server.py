@@ -83,7 +83,16 @@ def get_collection():
     global _collection
     if _collection is None:
         client = chromadb.PersistentClient(path=CHROMA_PATH)
-        _collection = client.get_collection(COLLECTION_NAME)
+        try:
+            _collection = client.get_collection(COLLECTION_NAME)
+        except Exception:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"知识库集合 '{COLLECTION_NAME}' 不存在，"
+                    "请先运行 `kb sync --full` 构建索引。"
+                ),
+            )
     return _collection
 
 
@@ -123,6 +132,12 @@ class SyncRequest(BaseModel):
 
 
 # ── 端点 ──────────────────────────────────────────────
+@app.get("/health")
+def health_check():
+    """健康检查端点（用于 Docker healthcheck 和负载均衡）"""
+    return {"status": "ok", "service": "kb-engine"}
+
+
 @app.get("/")
 def root():
     return {
