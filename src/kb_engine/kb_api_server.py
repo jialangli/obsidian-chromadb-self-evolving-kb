@@ -14,10 +14,9 @@ Knowledge 知识库 - 语义检索 HTTP API 服务
   python kb_api_server.py --port 9000
 """
 
+import argparse
 import os
 import sys
-import json
-import argparse
 from datetime import datetime
 
 # 强制离线（须在 chromadb / huggingface 相关 import 之前）
@@ -26,26 +25,26 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+from typing import Optional
+
 import chromadb
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional
 
 # 复用同目录下的同步脚本模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kb_engine.sync_obsidian_to_chroma import (
-    LsaEmbedder,
-    VAULT_PATH,
-    CHROMA_PATH,
-    COLLECTION_NAME,
-    VECTORIZER_PATH,
-)
 
 # 自进化闭环：A/B 灰度路由（与 MCP 服务端共用同一套 decide_variant）
 import kb_engine.closed_loop_runtime as closed_loop_runtime
-import kb_engine.closed_loop_config as C
+from kb_engine.sync_obsidian_to_chroma import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    VAULT_PATH,
+    VECTORIZER_PATH,
+    LsaEmbedder,
+)
 
 # ── 全局单例 ──────────────────────────────────────────
 LSA_PATH = VECTORIZER_PATH  # lsa_model.pkl
@@ -96,6 +95,7 @@ def get_hybrid():
     global _hybrid
     if _hybrid is None:
         from kb_engine.hybrid_retrieve import HybridRetriever
+
         _hybrid = HybridRetriever()
     return _hybrid
 
@@ -104,7 +104,9 @@ def get_hybrid():
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="自然语言查询")
     top_k: int = Field(5, ge=1, le=50, description="返回结果数")
-    memory_type: Optional[str] = Field(None, description="过滤：fact/preference/experience/safety/task_state/navigation")
+    memory_type: Optional[str] = Field(
+        None, description="过滤：fact/preference/experience/safety/task_state/navigation"
+    )
     source_file: Optional[str] = Field(None, description="过滤：来源文件相对路径（支持部分匹配）")
 
 
@@ -193,17 +195,19 @@ def search(req: SearchRequest):
         for h in hr.search(req.query, top_k=req.top_k, where=hyb_where or None):
             m = coll.get(ids=[h["id"]], include=["metadatas"])
             meta = m["metadatas"][0] if m["metadatas"] else {}
-            hits.append({
-                "similarity": h["similarity"],
-                "bm25": h["bm25"],
-                "fused_score": h["fused_score"],
-                "source_file": h["source_file"],
-                "header_path": h["header_path"],
-                "memory_type": h["memory_type"],
-                "status": meta.get("status", ""),
-                "tags": meta.get("tags", ""),
-                "excerpt": h["excerpt"],
-            })
+            hits.append(
+                {
+                    "similarity": h["similarity"],
+                    "bm25": h["bm25"],
+                    "fused_score": h["fused_score"],
+                    "source_file": h["source_file"],
+                    "header_path": h["header_path"],
+                    "memory_type": h["memory_type"],
+                    "status": meta.get("status", ""),
+                    "tags": meta.get("tags", ""),
+                    "excerpt": h["excerpt"],
+                }
+            )
         retriever = f"hybrid({'bge' if hr.vector_mode == 'bge' else 'lsa'}+bm25+rrf) [{variant}@{model_version}]"
         return {
             "query": req.query,
@@ -229,15 +233,17 @@ def search(req: SearchRequest):
 
     hits = []
     for i in range(len(results["ids"][0])):
-        hits.append({
-            "similarity": round(1 - results["distances"][0][i], 4),
-            "source_file": results["metadatas"][0][i].get("source_file", ""),
-            "header_path": results["metadatas"][0][i].get("header_path", ""),
-            "memory_type": results["metadatas"][0][i].get("memory_type", ""),
-            "status": results["metadatas"][0][i].get("status", ""),
-            "tags": results["metadatas"][0][i].get("tags", ""),
-            "excerpt": results["documents"][0][i][:500],
-        })
+        hits.append(
+            {
+                "similarity": round(1 - results["distances"][0][i], 4),
+                "source_file": results["metadatas"][0][i].get("source_file", ""),
+                "header_path": results["metadatas"][0][i].get("header_path", ""),
+                "memory_type": results["metadatas"][0][i].get("memory_type", ""),
+                "status": results["metadatas"][0][i].get("status", ""),
+                "tags": results["metadatas"][0][i].get("tags", ""),
+                "excerpt": results["documents"][0][i][:500],
+            }
+        )
 
     return {
         "query": req.query,
@@ -277,14 +283,16 @@ def filter_docs(req: FilterRequest):
     items = []
     for i in range(len(results["ids"])):
         doc = results["documents"][i]
-        items.append({
-            "source_file": results["metadatas"][i].get("source_file", ""),
-            "header_path": results["metadatas"][i].get("header_path", ""),
-            "memory_type": results["metadatas"][i].get("memory_type", ""),
-            "status": results["metadatas"][i].get("status", ""),
-            "date_updated": results["metadatas"][i].get("date_updated", ""),
-            "excerpt": doc[:300],
-        })
+        items.append(
+            {
+                "source_file": results["metadatas"][i].get("source_file", ""),
+                "header_path": results["metadatas"][i].get("header_path", ""),
+                "memory_type": results["metadatas"][i].get("memory_type", ""),
+                "status": results["metadatas"][i].get("status", ""),
+                "date_updated": results["metadatas"][i].get("date_updated", ""),
+                "excerpt": doc[:300],
+            }
+        )
 
     return {
         "filters": {
@@ -302,9 +310,15 @@ def filter_docs(req: FilterRequest):
 def trigger_sync(req: SyncRequest):
     """触发同步（在子进程中运行，避免阻塞 API）"""
     import subprocess
+
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_obsidian_to_chroma.py")
     cmd = [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "venv", "Scripts", "python.exe"),
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "venv",
+            "Scripts",
+            "python.exe",
+        ),
         script,
     ]
     if req.full:
@@ -312,7 +326,10 @@ def trigger_sync(req: SyncRequest):
 
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
             cwd=os.path.dirname(script),
         )
         # 同步后重置缓存（LSA 模型已重新训练，必须重新加载）
@@ -336,7 +353,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"{'='*60}")
-    print(f"Knowledge 知识库语义检索 API")
+    print("Knowledge 知识库语义检索 API")
     print(f"  地址:     http://{args.host}:{args.port}")
     print(f"  文档:     http://{args.host}:{args.port}/docs")
     print(f"  Vault:    {VAULT_PATH}")

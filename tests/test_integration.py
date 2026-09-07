@@ -1,10 +1,9 @@
 """
 集成测试：使用示例 Vault 构建索引并检索
 """
-import os
-import sys
-import tempfile
+
 import shutil
+import tempfile
 from pathlib import Path
 
 import pytest

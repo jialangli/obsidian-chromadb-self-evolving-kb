@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 检索运行时 + A/B 灰度路由（供 MCP / API 在线调用）
 ==================================================
@@ -10,12 +9,12 @@
   - 灰度开启时，按 traffic_ratio 概率把一部分流量路由到候选检索器
   - 检索器实例按 bge 集合名缓存，避免重复加载全库向量
 """
+
 import random
 
-import kb_engine.closed_loop_config as C
+import kb_engine.closed_loop_config as cfg  # noqa: N812
 from kb_engine.hybrid_retrieve import HybridRetriever
 from kb_engine.kb_embed import BgeEmbedder
-
 
 # bge 集合名 → 检索器实例 的缓存
 _HUBS = {}
@@ -33,16 +32,18 @@ def _make_retriever(bge_collection_name: str, bge_model_path: str = None) -> Hyb
 
 
 def get_baseline_retriever() -> HybridRetriever:
-    st = C.load_active()
+    st = cfg.load_active()
     key = st["active_bge_collection"]
     if key not in _HUBS:
-        _HUBS[key] = _make_retriever(key, st["active_bge_model"] if _is_custom(st["active_bge_model"]) else None)
+        _HUBS[key] = _make_retriever(
+            key, st["active_bge_model"] if _is_custom(st["active_bge_model"]) else None
+        )
     return _HUBS[key]
 
 
 def get_candidate_retriever() -> HybridRetriever:
     """返回当前灰度候选检索器；未开启灰度或候选不可用则返回 None。"""
-    st = C.load_active()
+    st = cfg.load_active()
     ab = st["ab"]
     if not ab.get("enabled") or not ab.get("candidate_collection"):
         return None
@@ -62,7 +63,7 @@ def decide_variant() -> tuple:
     决定本次请求走哪个臂。
     Returns: (variant: "baseline"|"candidate", collection_name, retriever)
     """
-    st = C.load_active()
+    st = cfg.load_active()
     ab = st["ab"]
     if ab.get("enabled") and ab.get("candidate_collection"):
         ratio = float(ab.get("traffic_ratio", 0.0) or 0.0)

@@ -1,17 +1,14 @@
 """
 配置模块单元测试
 """
-import os
-import sys
-import tempfile
-from pathlib import Path
 
-import pytest
+import os
+from pathlib import Path
 
 
 def test_settings_defaults():
     """测试默认配置是否正确加载"""
-    from kb_engine.config import settings, DEFAULTS
+    from kb_engine.config import DEFAULTS, settings
 
     assert settings is not None
     # 检查几个关键默认值
@@ -45,7 +42,9 @@ def test_env_override():
     os.environ["KB_TOP_K"] = "42"
     # 重新导入以触发环境变量读取
     import importlib
+
     from kb_engine import config
+
     importlib.reload(config)
 
     assert config.settings.top_k == 42

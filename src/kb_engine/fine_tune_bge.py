@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 BGE 对比学习微调（自进化闭环第②步）
 ====================================
@@ -14,26 +13,37 @@ BGE 对比学习微调（自进化闭环第②步）
   python fine_tune_bge.py --triples-file tri.json --out models/bge_ft_candidate
   # 或在代码里调用 train(triples, base_model, out_dir)
 """
+
 import os
+
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-import sys
-import json
 import argparse
+import json
 import random
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from kb_engine.kb_embed import BGE_QUERY_PREFIX, MODEL_NAME as DEFAULT_BASE_MODEL
+from kb_engine.kb_embed import BGE_QUERY_PREFIX
+from kb_engine.kb_embed import MODEL_NAME as DEFAULT_BASE_MODEL
 
 
-def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
-          epochs: int = 1, batch_size: int = 8, lr: float = 2e-5, seed: int = 42,
-          scale: float = 20.0, hard_neg_weight: float = 1.0):
+def train(
+    triples: list,
+    out_dir: str,
+    base_model: str = DEFAULT_BASE_MODEL,
+    epochs: int = 1,
+    batch_size: int = 8,
+    lr: float = 2e-5,
+    seed: int = 42,
+    scale: float = 20.0,
+    hard_neg_weight: float = 1.0,
+):
     """
     Args:
         triples: [(query, pos_text, neg_text), ...]
@@ -82,15 +92,15 @@ def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
         emb = out["sentence_embedding"]
         return torch.nn.functional.normalize(emb, p=2, dim=1)
 
-    N = len(examples)
-    n_batches = max(1, (N + batch_size - 1) // batch_size)
+    n = len(examples)
+    n_batches = max(1, (n + batch_size - 1) // batch_size)
     final_loss = 0.0
     for ep in range(epochs):
-        idx = list(range(N))
+        idx = list(range(n))
         rng.shuffle(idx)
         ep_loss = 0.0
-        for i in range(0, N, batch_size):
-            b = idx[i:i + batch_size]
+        for i in range(0, n, batch_size):
+            b = idx[i : i + batch_size]
             qs = [examples[j][0] for j in b]
             ps = [examples[j][1] for j in b]
             # 训练时保持梯度连通（train 模式），归一化后算余弦相似度
@@ -100,7 +110,7 @@ def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
             # 项①：in-batch MNRL（批内其他样本的正例充当负例）
             sim = util.cos_sim(q_emb, p_emb) * scale
             labels = torch.arange(len(b), device=sim.device)
-            loss = loss_fn(sim, labels)               # 对角线为正例
+            loss = loss_fn(sim, labels)  # 对角线为正例
 
             # 项②：显式难负例 InfoNCE —— 把「模型当前真正会混淆的 chunk」压下去。
             # 随机负例模型早已能区分，梯度近乎为零；难负例才是有效信号。
@@ -109,9 +119,9 @@ def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
                 negs = examples[j][2]
                 if not negs:
                     continue
-                n_emb = _encode(negs)                                   # (k, d)
-                cand = torch.cat([p_emb[row:row + 1], n_emb], dim=0)     # (1+k, d)
-                logits = (q_emb[row:row + 1] @ cand.T) * scale           # (1, 1+k)
+                n_emb = _encode(negs)  # (k, d)
+                cand = torch.cat([p_emb[row : row + 1], n_emb], dim=0)  # (1+k, d)
+                logits = (q_emb[row : row + 1] @ cand.T) * scale  # (1, 1+k)
                 target = torch.zeros(1, dtype=torch.long, device=logits.device)
                 hard_terms.append(loss_fn(logits, target))
             if hard_terms:
@@ -128,9 +138,14 @@ def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
     Path(out_dir).parent.mkdir(parents=True, exist_ok=True)
     model.save(out_dir)
     print(f"[FT] 微调完成，保存至: {out_dir}")
-    return {"out_dir": out_dir, "n_examples": N, "base_model": base_model,
-            "final_loss": round(final_loss, 4), "n_with_hard_neg": n_hard,
-            "scale": scale}
+    return {
+        "out_dir": out_dir,
+        "n_examples": n,
+        "base_model": base_model,
+        "final_loss": round(final_loss, 4),
+        "n_with_hard_neg": n_hard,
+        "scale": scale,
+    }
 
 
 if __name__ == "__main__":
@@ -143,11 +158,17 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.triples_file:
-        with open(args.triples_file, "r", encoding="utf-8") as f:
+        with open(args.triples_file, encoding="utf-8") as f:
             triples = json.load(f)
     else:
         import kb_engine.feedback_dataset as fd
+
         fb = fd.load_feedback()
         triples = fd.build_training_triples(fb) or fd.bootstrap_triples_from_cases()
-    train(triples, args.out, base_model=args.base_model, epochs=args.epochs,
-          batch_size=args.batch_size)
+    train(
+        triples,
+        args.out,
+        base_model=args.base_model,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+    )

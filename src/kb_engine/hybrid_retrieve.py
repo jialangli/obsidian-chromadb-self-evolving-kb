@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Knowledge 知识库 混合检索模块 (Hybrid Retriever)
 ==============================================
@@ -22,26 +21,25 @@ Knowledge 知识库 混合检索模块 (Hybrid Retriever)
 """
 
 import math
-import re
 from pathlib import Path
 
-import numpy as np
 import chromadb
+import numpy as np
 
 from kb_engine.sync_obsidian_to_chroma import (
-    LsaEmbedder,
-    tokenize_zh,
     CHROMA_PATH,
     COLLECTION_NAME,
     COLLECTION_NAME_BGE,
     VECTORIZER_PATH,
+    LsaEmbedder,
+    tokenize_zh,
 )
 
 # ── 可调参数 ──────────────────────────────────────────
 BM25_K1 = 1.5
 BM25_B = 0.75
 RRF_K = 60
-CANDIDATE_POOL = 50      # 每个通道取前 N 个候选进入融合
+CANDIDATE_POOL = 50  # 每个通道取前 N 个候选进入融合
 QUERY_EXCERPT_LEN = 200
 
 
@@ -58,8 +56,8 @@ class BM25Index:
         self.doc_len = [len(t) for t in corpus_tokens]
         self.n_docs = len(corpus_tokens)
         self.avgdl = (sum(self.doc_len) / self.n_docs) if self.n_docs else 0.0
-        self.tf = []           # 每篇 {term: freq}
-        self.df = {}           # term -> 含该 term 的文档数
+        self.tf = []  # 每篇 {term: freq}
+        self.df = {}  # term -> 含该 term 的文档数
         for tokens in corpus_tokens:
             tf = {}
             for tok in tokens:
@@ -102,9 +100,14 @@ class HybridRetriever:
         加载 base BgeEmbedder。两参数均向后兼容，不传则与改造前行为完全一致。
     """
 
-    def __init__(self, chroma_path=CHROMA_PATH, collection_name=COLLECTION_NAME,
-                 vectorizer_path=VECTORIZER_PATH,
-                 bge_collection_name=COLLECTION_NAME_BGE, bge_embedder=None):
+    def __init__(
+        self,
+        chroma_path=CHROMA_PATH,
+        collection_name=COLLECTION_NAME,
+        vectorizer_path=VECTORIZER_PATH,
+        bge_collection_name=COLLECTION_NAME_BGE,
+        bge_embedder=None,
+    ):
         self._chroma_path = chroma_path
         self._collection_name = collection_name
         self._vectorizer_path = vectorizer_path
@@ -127,7 +130,9 @@ class HybridRetriever:
 
         bge_ok = False
         try:
-            from kb_engine.kb_embed import BgeEmbedder, available as bge_available
+            from kb_engine.kb_embed import BgeEmbedder
+            from kb_engine.kb_embed import available as bge_available
+
             # 候选/微调模型：外部显式传入，跳过 base 模型探测
             if self._bge_embedder_override is not None:
                 try:
@@ -168,8 +173,10 @@ class HybridRetriever:
             self.metas = data["metadatas"]
             self.bge = None
             self.vector_mode = "lsa"
-            raw_texts = [f"{(m or {}).get('source_file','')} {(m or {}).get('filename','')} {d or ''}"
-                         for d, m in zip(self.docs, self.metas)]
+            raw_texts = [
+                f"{(m or {}).get('source_file','')} {(m or {}).get('filename','')} {d or ''}"
+                for d, m in zip(self.docs, self.metas)
+            ]
             self.vecs = self.embedder.transform(raw_texts)
 
         self._id_pos = {cid: i for i, cid in enumerate(self.ids)}
@@ -217,8 +224,14 @@ class HybridRetriever:
             "excerpt": (doc or "")[:QUERY_EXCERPT_LEN],
         }
 
-    def search(self, query: str, top_k: int = 5, where: dict = None,
-               vector_only: bool = False, bm25_only: bool = False):
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        where: dict = None,
+        vector_only: bool = False,
+        bm25_only: bool = False,
+    ):
         self._refresh_if_stale()
         top_k = max(1, int(top_k))
         where = where or {}
@@ -282,18 +295,22 @@ class HybridRetriever:
         for cid, dist, meta, doc in zip(
             res["ids"][0], res["distances"][0], res["metadatas"][0], res["documents"][0]
         ):
-            hits.append({
-                "id": cid,
-                "similarity": round(1 - dist, 3),
-                "source_file": meta.get("source_file", ""),
-                "header_path": meta.get("header_path", ""),
-                "memory_type": meta.get("memory_type", ""),
-                "excerpt": (doc or "")[:QUERY_EXCERPT_LEN],
-            })
+            hits.append(
+                {
+                    "id": cid,
+                    "similarity": round(1 - dist, 3),
+                    "source_file": meta.get("source_file", ""),
+                    "header_path": meta.get("header_path", ""),
+                    "memory_type": meta.get("memory_type", ""),
+                    "excerpt": (doc or "")[:QUERY_EXCERPT_LEN],
+                }
+            )
         return hits
 
 
 if __name__ == "__main__":
     r = HybridRetriever()
     for h in r.search("火星救援的得分体系", top_k=5):
-        print(f"{h['fused_score']:.4f}  sim={h['similarity']} bm25={h['bm25']}  {h['source_file']} :: {h['header_path']}")
+        print(
+            f"{h['fused_score']:.4f}  sim={h['similarity']} bm25={h['bm25']}  {h['source_file']} :: {h['header_path']}"
+        )

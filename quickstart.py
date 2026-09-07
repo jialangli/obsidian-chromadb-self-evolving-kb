@@ -10,16 +10,16 @@
 用法：
   python quickstart.py
 """
+
 import os
 import sys
-import subprocess
 
 
 def check_python():
     """检查 Python 版本"""
     print("🐍 检查 Python 环境...")
     print(f"   版本: {sys.version.split()[0]}")
-    if sys.version_info < (3, 9):
+    if sys.version_info < (3, 9):  # noqa: UP036
         print("   ⚠ 需要 Python 3.9+")
         return False
     print("   ✓ Python 版本 OK")
@@ -58,6 +58,7 @@ def build_index():
 
     try:
         from kb_engine.sync_obsidian_to_chroma import main as sync_main
+
         # 模拟命令行参数
         sys.argv = ["kb-sync", "--full"]
         sync_main()
@@ -66,6 +67,7 @@ def build_index():
     except Exception as e:
         print(f"   ✗ 构建失败: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -80,6 +82,7 @@ def demo_search():
 
     try:
         from kb_engine.hybrid_retrieve import HybridRetriever
+
         retriever = HybridRetriever()
 
         queries = [
@@ -88,7 +91,7 @@ def demo_search():
             "如何治理知识库",
         ]
         for q in queries:
-            print(f"\n   查询: \"{q}\"")
+            print(f'\n   查询: "{q}"')
             hits = retriever.search(q, top_k=3)
             for i, hit in enumerate(hits, 1):
                 source = hit.get("source_file", "?")
@@ -101,6 +104,7 @@ def demo_search():
     except Exception as e:
         print(f"   ✗ 检索失败: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

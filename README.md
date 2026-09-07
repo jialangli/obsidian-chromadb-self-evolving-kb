@@ -88,10 +88,16 @@ obsidian-chromadb-self-evolving-kb/
 ├── requirements.txt            # 运行时依赖清单
 ├── config.example.yaml         # 配置模板
 ├── quickstart.py               # 一键快速入门脚本
+├── .pre-commit-config.yaml     # pre-commit 钩子配置
 ├── .gitignore
 │
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions CI 工作流
+│
 ├── src/kb_engine/              # 主包（src layout）
-│   ├── __init__.py             # 包初始化，暴露 settings
+│   ├── __init__.py             # 包初始化，暴露 settings 和版本
+│   ├── cli.py                  # 统一 CLI 入口（typer）
 │   ├── config.py               # 统一配置模块（环境变量 + config.yaml + 默认值）
 │   ├── sync_obsidian_to_chroma.py  # Vault → ChromaDB 同步脚本
 │   ├── kb_embed.py             # BGE 嵌入模型封装
@@ -182,32 +188,66 @@ obsidian-chromadb-self-evolving-kb/
 
 ```bash
 # 同步知识库（增量）
-python -m kb_engine.sync_obsidian_to_chroma
+kb sync
 
 # 全量重建索引
-python -m kb_engine.sync_obsidian_to_chroma --full
+kb sync --full
 
 # 启动 HTTP API
-python -m kb_engine.kb_api_server
+kb api --port 8300
 
 # 知识库体检
-python -m kb_engine.kb_audit
+kb audit
 
 # 检索效果评估
-python -m kb_engine.eval_retrieval
+kb eval
 
-# 启动 API 守护（自动重启）
-python -m kb_engine.kb_api_guard
+# 查看统计
+kb stats
 ```
+
+> 也可以用 `python -m kb_engine.xxx` 方式调用，效果相同。
 
 ## 开发指南
 
-### 运行测试
+### 代码规范
+
+项目使用以下工具保证代码质量：
+
+| 工具 | 作用 | 配置 |
+|------|------|------|
+| **black** | 代码格式化 | `pyproject.toml` `[tool.black]` |
+| **isort** | import 排序 | `pyproject.toml` `[tool.isort]` |
+| **ruff** | 代码检查 | `pyproject.toml` `[tool.ruff]` |
+| **mypy** | 类型检查 | `pyproject.toml` `[tool.mypy]` |
 
 ```bash
 # 安装开发依赖
 pip install -e ".[dev]"
 
+# 代码格式化
+black src/ tests/
+isort src/ tests/
+
+# 代码检查
+ruff check src/ tests/
+
+# 类型检查
+mypy src/kb_engine/
+```
+
+### pre-commit
+
+推荐安装 pre-commit 钩子，提交前自动检查：
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+### 运行测试
+
+```bash
 # 运行所有测试
 pytest
 
@@ -215,16 +255,14 @@ pytest
 pytest --cov=kb_engine --cov-report=term-missing
 ```
 
-### 代码规范
+### CI/CD
 
-```bash
-# 格式化
-black src/ tests/
-isort src/ tests/
+项目使用 GitHub Actions 持续集成，每次 push 和 PR 都会自动运行：
 
-# 检查
-ruff check src/ tests/
-```
+- **Lint**：black + isort + ruff 格式检查
+- **Test**：Python 3.9 / 3.10 / 3.11 / 3.12 多版本测试
+
+配置文件：`.github/workflows/ci.yml`
 
 更多开发规范请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 

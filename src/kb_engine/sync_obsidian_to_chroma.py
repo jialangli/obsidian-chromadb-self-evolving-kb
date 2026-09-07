@@ -18,15 +18,16 @@ Embedding 方案：字符级 n-gram TF-IDF（本地离线，无需下载模型�
   python sync_obsidian_to_chroma.py --full   # 全量重建
 """
 
-import os
-import sys
-import re
-import json
-import pickle
 import hashlib
-import numpy as np
-from pathlib import Path
+import json
+import os
+import pickle
+import re
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 
 # 强制离线：必须在 import chromadb/huggingface_hub 之前设置，否则常量会被提前固化
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -36,15 +37,18 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import chromadb
 import frontmatter
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 from kb_engine.config import settings
 
 # ── 配置 ──────────────────────────────────────────────
 VAULT_PATH = settings.vault_path
 CHROMA_PATH = settings.chroma_path
 COLLECTION_NAME = settings.collection_lsa
-COLLECTION_NAME_BGE = settings.collection_bge   # bge-small-zh-v1.5 神经语义向量库（与 LSA 并存，可回退）
+COLLECTION_NAME_BGE = (
+    settings.collection_bge
+)  # bge-small-zh-v1.5 神经语义向量库（与 LSA 并存，可回退）
 LOG_PATH = os.path.join(settings.log_path, "sync_log.json")
 VECTORIZER_PATH = settings.lsa_model_path
 
@@ -113,11 +117,14 @@ class LsaEmbedder:
 
     def save(self, path: str):
         with open(path, "wb") as f:
-            pickle.dump({
-                "vectorizer": self.vectorizer,
-                "svd": self.svd,
-                "dim": self.n_components,
-            }, f)
+            pickle.dump(
+                {
+                    "vectorizer": self.vectorizer,
+                    "svd": self.svd,
+                    "dim": self.n_components,
+                },
+                f,
+            )
 
     @classmethod
     def load(cls, path: str):
@@ -144,7 +151,7 @@ def get_vault_files(vault_path: str, exclude_dirs: set) -> list:
 
 def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
     """将 Markdown 文件按 heading 分块，保留标题层级上下文 + frontmatter 元数据"""
-    with open(filepath, "r", encoding="utf-8") as f:
+    with open(filepath, encoding="utf-8") as f:
         raw = f.read()
 
     post = frontmatter.loads(raw)
@@ -158,7 +165,11 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
         "source_file": rel_path,
         "filename": filename,
         "memory_type": metadata.get("memory_type", "unknown"),
-        "tags": "|".join(metadata.get("tags", [])) if isinstance(metadata.get("tags"), list) else str(metadata.get("tags", "")),
+        "tags": (
+            "|".join(metadata.get("tags", []))
+            if isinstance(metadata.get("tags"), list)
+            else str(metadata.get("tags", ""))
+        ),
         "source": metadata.get("source", ""),
         "date_created": str(metadata.get("date_created", "")),
         "date_updated": str(metadata.get("date_updated", "")),
@@ -187,15 +198,17 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
                     (rel_path + "|" + header_path + "|" + chunk_text[:100]).encode()
                 ).hexdigest()
                 doc_text = f"[{file_meta['memory_type']}] {header_path}\n{chunk_text}"
-                chunks.append({
-                    "id": chunk_id,
-                    "text": doc_text,
-                    "metadata": {
-                        **file_meta,
-                        "header_path": header_path,
-                        "chunk_index": len(chunks),
-                    },
-                })
+                chunks.append(
+                    {
+                        "id": chunk_id,
+                        "text": doc_text,
+                        "metadata": {
+                            **file_meta,
+                            "header_path": header_path,
+                            "chunk_index": len(chunks),
+                        },
+                    }
+                )
 
     for line in lines:
         m = header_pattern.match(line)
@@ -204,7 +217,7 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
             current_section_lines = []
             level = len(m.group(1))
             title = m.group(2).strip()
-            current_headers = current_headers[:level - 1]
+            current_headers = current_headers[: level - 1]
             current_headers.append(title)
         else:
             current_section_lines.append(line)
@@ -213,15 +226,17 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
 
     if not chunks and content.strip():
         chunk_id = hashlib.md5((rel_path + "|full").encode()).hexdigest()
-        chunks.append({
-            "id": chunk_id,
-            "text": f"[{file_meta['memory_type']}] {filename}\n{content.strip()}",
-            "metadata": {
-                **file_meta,
-                "header_path": filename,
-                "chunk_index": 0,
-            },
-        })
+        chunks.append(
+            {
+                "id": chunk_id,
+                "text": f"[{file_meta['memory_type']}] {filename}\n{content.strip()}",
+                "metadata": {
+                    **file_meta,
+                    "header_path": filename,
+                    "chunk_index": 0,
+                },
+            }
+        )
 
     return chunks
 
@@ -238,7 +253,7 @@ def build_bge_collection(all_chunks: list, full_rebuild: bool = False) -> dict:
     """构建/更新 bge 神经语义向量库（独立 collection，失败不影响 LSA 同步）。"""
     try:
         from kb_engine.kb_embed import BgeEmbedder, available
-from kb_engine.config import settings
+
         if not available():
             print("[BGE]  模型权重未缓存，跳过 bge 建库（检索将回退 LSA 混合）")
             return {"built": False, "reason": "model-not-cached"}
@@ -255,22 +270,23 @@ from kb_engine.config import settings
                 pass
         col = client.get_or_create_collection(
             name=COLLECTION_NAME_BGE,
-            metadata={"description": "Knowledge 知识库 - bge-small-zh-v1.5 神经语义向量库",
-                      "embedding_model": "BAAI/bge-small-zh-v1.5",
-                      "dim": int(vecs.shape[1])},
+            metadata={
+                "description": "Knowledge 知识库 - bge-small-zh-v1.5 神经语义向量库",
+                "embedding_model": "BAAI/bge-small-zh-v1.5",
+                "dim": int(vecs.shape[1]),
+            },
             embedding_function=None,
         )
         ids = [c["id"] for c in all_chunks]
         metas = [c["metadata"] for c in all_chunks]
-        BATCH = 500
-        for i in range(0, len(ids), BATCH):
-            b = slice(i, i + BATCH)
+        batch_size = 500  # noqa: N806
+        for i in range(0, len(ids), batch_size):
+            b = slice(i, i + batch_size)
             try:
                 col.delete(ids=ids[b])
             except Exception:
                 pass
-            col.add(ids=ids[b], documents=texts[b], metadatas=metas[b],
-                    embeddings=vecs[b].tolist())
+            col.add(ids=ids[b], documents=texts[b], metadatas=metas[b], embeddings=vecs[b].tolist())
         print(f"[BGE]  bge 库完成：{col.count()} 块，维度 {vecs.shape[1]}")
         return {"built": True, "dim": int(vecs.shape[1]), "count": col.count()}
     except Exception as e:
@@ -281,11 +297,11 @@ from kb_engine.config import settings
 def sync(full_rebuild: bool = False):
     """执行同步"""
     print(f"{'='*60}")
-    print(f"Knowledge 知识库 → ChromaDB 同步")
+    print("Knowledge 知识库 → ChromaDB 同步")
     print(f"  Vault:       {VAULT_PATH}")
     print(f"  ChromaDB:    {CHROMA_PATH}")
     print(f"  Collection:  {COLLECTION_NAME}")
-    print(f"  Embedding:   LSA（TF-IDF + SVD，离线）")
+    print("  Embedding:   LSA（TF-IDF + SVD，离线）")
     print(f"  Mode:        {'全量重建' if full_rebuild else '增量同步'}")
     print(f"{'='*60}")
 
@@ -307,7 +323,7 @@ def sync(full_rebuild: bool = False):
         return {"error": "no chunks"}
 
     # 2. 训练 LSA 嵌入器（TF-IDF + SVD，在全部 chunk 上 fit）
-    print(f"[FIT] 训练 LSA 嵌入器（TF-IDF + TruncatedSVD）...")
+    print("[FIT] 训练 LSA 嵌入器（TF-IDF + TruncatedSVD）...")
     embedder = LsaEmbedder()
     embedder.fit([c["text"] for c in all_chunks])
     print(f"[FIT] 词汇表大小: {embedder.vocab_size}, 语义维度: {embedder.svd.n_components}")
@@ -339,12 +355,12 @@ def sync(full_rebuild: bool = False):
     emb_list = embeddings.tolist()
 
     # 分批写入（避免单次过大）
-    BATCH = 500
-    for i in range(0, len(ids), BATCH):
-        batch_ids = ids[i:i+BATCH]
-        batch_texts = texts[i:i+BATCH]
-        batch_meta = metadatas[i:i+BATCH]
-        batch_emb = emb_list[i:i+BATCH]
+    batch_size = 500  # noqa: N806
+    for i in range(0, len(ids), batch_size):
+        batch_ids = ids[i : i + batch_size]
+        batch_texts = texts[i : i + batch_size]
+        batch_meta = metadatas[i : i + batch_size]
+        batch_emb = emb_list[i : i + batch_size]
         try:
             collection.delete(ids=batch_ids)  # 幂等：先删后加
         except Exception:
@@ -355,7 +371,7 @@ def sync(full_rebuild: bool = False):
             metadatas=batch_meta,
             embeddings=batch_emb,
         )
-        print(f"  [WRITE] 批次 {i//BATCH + 1}: {len(batch_ids)} 块入库")
+        print(f"  [WRITE] 批次 {i//batch_size + 1}: {len(batch_ids)} 块入库")
 
     # 4.5 构建 bge 神经语义向量库（独立 collection，失败不影响上面的 LSA 结果）
     bge_info = build_bge_collection(all_chunks, full_rebuild)
@@ -367,7 +383,9 @@ def sync(full_rebuild: bool = False):
         "chunks": len(all_chunks),
         "vocab_size": embedder.vocab_size,
         "embedding_dim": EMBEDDING_DIM,
-        "embedding_method": "hybrid(lsa+bm25) + bge-small-zh" if bge_info.get("built") else "hybrid(lsa+bm25)",
+        "embedding_method": (
+            "hybrid(lsa+bm25) + bge-small-zh" if bge_info.get("built") else "hybrid(lsa+bm25)"
+        ),
         "bge": bge_info,
     }
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
@@ -376,7 +394,7 @@ def sync(full_rebuild: bool = False):
 
     collection_count = collection.count()
     print(f"\n{'='*60}")
-    print(f"同步完成！")
+    print("同步完成！")
     print(f"  文件数:          {len(md_files)}")
     print(f"  内容块数:        {len(all_chunks)}")
     print(f"  词汇表大小:      {embedder.vocab_size}")

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Knowledge 知识库 MCP Server (Phase 3)
 ====================================
@@ -25,7 +24,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 
 # 强制离线（须在 chromadb / huggingface 相关 import 之前）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -40,19 +38,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
-
 from mcp.server.mcpserver import MCPServer
 
-from kb_engine.sync_obsidian_to_chroma import (
-    LsaEmbedder,
-    CHROMA_PATH,
-    COLLECTION_NAME,
-    VECTORIZER_PATH,
-)
+import kb_engine.closed_loop_config as cfg  # noqa: N812
 
 # 自进化闭环：A/B 灰度路由 + 按臂打 model_version 标签
 import kb_engine.closed_loop_runtime as closed_loop_runtime
-import kb_engine.closed_loop_config as C
+from kb_engine.sync_obsidian_to_chroma import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    VECTORIZER_PATH,
+    LsaEmbedder,
+)
 
 TRACE_PATH = Path(r"D:\kb-engine\logs\mcp_trace.jsonl")
 FEEDBACK_PATH = Path(r"D:\kb-engine\logs\feedback.jsonl")
@@ -113,6 +110,7 @@ def get_hybrid():
     global _hybrid
     if _hybrid is None:
         from kb_engine.hybrid_retrieve import HybridRetriever
+
         _hybrid = HybridRetriever()
     return _hybrid
 
@@ -173,8 +171,9 @@ def cache_results(query: str, hits: list, model_version: str = ""):
             RESULT_CACHE.pop(k, None)
 
 
-def log_feedback(result_id: str, adopted: bool, note: str = "",
-                 query: str = "", source_file: str = "") -> dict:
+def log_feedback(
+    result_id: str, adopted: bool, note: str = "", query: str = "", source_file: str = ""
+) -> dict:
     """把一条反馈写入 feedback.jsonl，返回写入的记录"""
     detail = RESULT_CACHE.get(result_id, {})
     record = {
@@ -205,13 +204,15 @@ def _fmt_results(results: dict, top_k: int) -> str:
     for i in range(len(results["ids"][0])):
         meta = results["metadatas"][0][i]
         doc = results["documents"][0][i]
-        hits.append({
-            "similarity": round(1 - results["distances"][0][i], 3),
-            "source_file": meta.get("source_file", ""),
-            "header_path": meta.get("header_path", ""),
-            "memory_type": meta.get("memory_type", ""),
-            "excerpt": doc[:200],
-        })
+        hits.append(
+            {
+                "similarity": round(1 - results["distances"][0][i], 3),
+                "source_file": meta.get("source_file", ""),
+                "header_path": meta.get("header_path", ""),
+                "memory_type": meta.get("memory_type", ""),
+                "excerpt": doc[:200],
+            }
+        )
     return json.dumps(
         {"query": results.get("_query", ""), "count": len(hits), "results": hits},
         ensure_ascii=False,
@@ -249,26 +250,36 @@ def search_knowledge_base(query: str, top_k: int = 5, memory_type: str = None) -
         for h in hyb_hits:
             # result_id 由「查询 + chunk id」生成，供后续反馈回传定位
             rid = make_result_id(query, h["id"])
-            hits.append({
-                "result_id": rid,
-                "similarity": h["similarity"],
-                "source_file": h["source_file"],
-                "header_path": h["header_path"],
-                "memory_type": h["memory_type"],
-                "bm25": h["bm25"],
-                "fused_score": h["fused_score"],
-                "excerpt": h["excerpt"],
-            })
+            hits.append(
+                {
+                    "result_id": rid,
+                    "similarity": h["similarity"],
+                    "source_file": h["source_file"],
+                    "header_path": h["header_path"],
+                    "memory_type": h["memory_type"],
+                    "bm25": h["bm25"],
+                    "fused_score": h["fused_score"],
+                    "excerpt": h["excerpt"],
+                }
+            )
         cache_results(query, hits, model_version=model_version)
         output = json.dumps(
-            {"query": query, "retriever": retriever, "model_version": model_version,
-             "count": len(hits), "results": hits},
-            ensure_ascii=False, indent=2,
+            {
+                "query": query,
+                "retriever": retriever,
+                "model_version": model_version,
+                "count": len(hits),
+                "results": hits,
+            },
+            ensure_ascii=False,
+            indent=2,
         )
         top1 = hits[0]["source_file"] if hits else ""
-        _trace("search_knowledge_base",
-               {"query": query, "top_k": top_k, "memory_type": memory_type},
-               f"hits={len(hits)}, top1={top1}, r={retriever}, v={model_version}, ids={[h['result_id'] for h in hits]}")
+        _trace(
+            "search_knowledge_base",
+            {"query": query, "top_k": top_k, "memory_type": memory_type},
+            f"hits={len(hits)}, top1={top1}, r={retriever}, v={model_version}, ids={[h['result_id'] for h in hits]}",
+        )
         return output
     except Exception:
         retriever = "lsa-fallback"
@@ -277,9 +288,7 @@ def search_knowledge_base(query: str, top_k: int = 5, memory_type: str = None) -
     def _do():
         q_emb = state["embedder"].transform([query]).tolist()
         where = {"memory_type": memory_type} if memory_type else None
-        return state["collection"].query(
-            query_embeddings=q_emb, n_results=top_k, where=where
-        )
+        return state["collection"].query(query_embeddings=q_emb, n_results=top_k, where=where)
 
     results = with_retry(_do)
     results["_query"] = query
@@ -342,13 +351,15 @@ def filter_knowledge_base(
         # where_document 与 where 不能同时传给 get()，contains 时在 Python 侧兜底
         if contains and not kwargs.get("where_document") and contains not in doc:
             continue
-        items.append({
-            "source_file": meta.get("source_file", ""),
-            "header_path": meta.get("header_path", ""),
-            "memory_type": meta.get("memory_type", ""),
-            "status": meta.get("status", ""),
-            "excerpt": doc[:200],
-        })
+        items.append(
+            {
+                "source_file": meta.get("source_file", ""),
+                "header_path": meta.get("header_path", ""),
+                "memory_type": meta.get("memory_type", ""),
+                "status": meta.get("status", ""),
+                "excerpt": doc[:200],
+            }
+        )
     _trace(
         "filter_knowledge_base",
         {"memory_type": memory_type, "status": status, "contains": contains},
@@ -366,17 +377,17 @@ def filter_knowledge_base(
 def knowledge_base_stats() -> str:
     state = _get_state()
     all_meta = with_retry(lambda: state["collection"].get(include=["metadatas"]))
-    coll = state["collection"]
     dist = {}
     for m in all_meta["metadatas"]:
         t = m.get("memory_type", "unknown")
         dist[t] = dist.get(t, 0) + 1
     files = {m.get("source_file", "") for m in all_meta["metadatas"]}
-    st = C.load_active()
+    st = cfg.load_active()
     ab = st["ab"]
     ab_status = (
         f"灰度中(候选={ab['candidate_collection']}, 流量={int(float(ab.get('traffic_ratio',0) or 0)*100)}%)"
-        if ab.get("enabled") else "未开启灰度"
+        if ab.get("enabled")
+        else "未开启灰度"
     )
     _trace("knowledge_base_stats", {}, f"chunks={len(all_meta['ids'])}")
     return json.dumps(
@@ -386,9 +397,9 @@ def knowledge_base_stats() -> str:
             "memory_type_distribution": dist,
             "embedding": f"bge 激活集合={st['active_bge_collection']}（base=kb-engine_bge），LSA(384d) 回退",
             "self_evolving_loop": ab_status,
-            "last_sync": datetime.fromtimestamp(
-                Path(VECTORIZER_PATH).stat().st_mtime
-            ).isoformat(timespec="minutes"),
+            "last_sync": datetime.fromtimestamp(Path(VECTORIZER_PATH).stat().st_mtime).isoformat(
+                timespec="minutes"
+            ),
         },
         ensure_ascii=False,
         indent=2,
@@ -412,13 +423,14 @@ def record_retrieval_feedback(result_id: str, adopted: bool, note: str = "") -> 
         note: 可选备注，如"答非所问""正是要找的计分表"
     """
     if not result_id:
-        return json.dumps({"success": False, "error": "result_id 不能为空"},
-                          ensure_ascii=False)
+        return json.dumps({"success": False, "error": "result_id 不能为空"}, ensure_ascii=False)
     rec = log_feedback(result_id, adopted, note)
     known = result_id in RESULT_CACHE
-    _trace("record_retrieval_feedback",
-           {"result_id": result_id, "adopted": bool(adopted)},
-           f"adopted={bool(adopted)}, known={known}")
+    _trace(
+        "record_retrieval_feedback",
+        {"result_id": result_id, "adopted": bool(adopted)},
+        f"adopted={bool(adopted)}, known={known}",
+    )
     return json.dumps(
         {
             "success": True,
@@ -450,13 +462,17 @@ def feedback_stats(top_n: int = 5) -> str:
         top_n: 返回的 Top 文档数量（默认 5）
     """
     if not FEEDBACK_PATH.exists():
-        return json.dumps({
-            "total_feedback": 0,
-            "message": "暂无反馈数据。调用 record_retrieval_feedback 后这里会有统计。",
-        }, ensure_ascii=False, indent=2)
+        return json.dumps(
+            {
+                "total_feedback": 0,
+                "message": "暂无反馈数据。调用 record_retrieval_feedback 后这里会有统计。",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     rows = []
-    with open(FEEDBACK_PATH, "r", encoding="utf-8") as f:
+    with open(FEEDBACK_PATH, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -467,8 +483,9 @@ def feedback_stats(top_n: int = 5) -> str:
                 continue
 
     if not rows:
-        return json.dumps({"total_feedback": 0, "message": "反馈文件为空"},
-                          ensure_ascii=False, indent=2)
+        return json.dumps(
+            {"total_feedback": 0, "message": "反馈文件为空"}, ensure_ascii=False, indent=2
+        )
 
     # 同一 result_id 多次反馈时，取最新一条
     latest = {}

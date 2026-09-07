@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 A/B 在线监控与自动晋升/回滚（自进化闭环第⑤步·线上）
 ====================================================
@@ -12,16 +11,16 @@ A/B 在线监控与自动晋升/回滚（自进化闭环第⑤步·线上）
   python ab_monitor.py            # 演练（只报告决策）
   python ab_monitor.py --apply    # 真正执行晋升/回滚（写 active_model.json）
 """
-import sys
+
 import argparse
-from datetime import datetime
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import kb_engine.closed_loop_config as C
-import kb_engine.feedback_dataset as feedback_dataset
+import kb_engine.closed_loop_config as cfg  # noqa: N812
 import kb_engine.closed_loop_runtime as closed_loop_runtime
+import kb_engine.feedback_dataset as feedback_dataset
 
 
 def _rate(rows):
@@ -31,7 +30,7 @@ def _rate(rows):
     return adopted / len(rows), len(rows)
 
 
-def decide_ab(baseline_rows, candidate_rows, config=C) -> dict:
+def decide_ab(baseline_rows, candidate_rows, config=cfg) -> dict:
     """
     纯函数：给定两臂反馈，返回决策。
     Returns: {action, rate_baseline, rate_candidate, n_baseline, n_candidate, detail}
@@ -45,12 +44,16 @@ def decide_ab(baseline_rows, candidate_rows, config=C) -> dict:
         detail = f"样本不足（基线 {n_b}/候选 {n_c} < 每臂 {min_n}），继续灰度"
     elif rate_c < rate_b - config.AB_ROLLBACK_MAX_DROP:
         action = "rollback_online"
-        detail = (f"候选采纳率 {rate_c:.1%} 显著低于基线 {rate_b:.1%}"
-                  f"（差 {rate_b-rate_c:.1%} > 阈值 {config.AB_ROLLBACK_MAX_DROP:.0%}）→ 回滚")
+        detail = (
+            f"候选采纳率 {rate_c:.1%} 显著低于基线 {rate_b:.1%}"
+            f"（差 {rate_b-rate_c:.1%} > 阈值 {config.AB_ROLLBACK_MAX_DROP:.0%}）→ 回滚"
+        )
     elif rate_c >= rate_b + config.AB_PROMOTE_MIN_LIFT:
         action = "promote_full"
-        detail = (f"候选采纳率 {rate_c:.1%} 不低于基线 {rate_b:.1%}"
-                  f"（提升 {rate_c-rate_b:+.1%}）→ 全量晋升")
+        detail = (
+            f"候选采纳率 {rate_c:.1%} 不低于基线 {rate_b:.1%}"
+            f"（提升 {rate_c-rate_b:+.1%}）→ 全量晋升"
+        )
     else:
         action = "keep_ab"
         detail = f"候选 {rate_c:.1%} vs 基线 {rate_b:.1%}，差异不显著，继续灰度"
@@ -66,7 +69,7 @@ def decide_ab(baseline_rows, candidate_rows, config=C) -> dict:
 
 
 def monitor(apply: bool = False) -> dict:
-    st = C.load_active()
+    st = cfg.load_active()
     ab = st["ab"]
     if not ab.get("enabled") or not ab.get("candidate_collection"):
         print("[AB] 当前未开启灰度 A/B，无需监控。")
@@ -89,19 +92,26 @@ def monitor(apply: bool = False) -> dict:
             cand_rows.append(r)
 
     dec = decide_ab(base_rows, cand_rows)
-    print(f"[AB] 灰度监控：基线({base_coll}) n={dec['n_baseline']} 采纳率={dec['rate_baseline']:.1%}"
-          f" | 候选({cand_coll}) n={dec['n_candidate']} 采纳率={dec['rate_candidate']:.1%}")
+    print(
+        f"[AB] 灰度监控：基线({base_coll}) n={dec['n_baseline']} 采纳率={dec['rate_baseline']:.1%}"
+        f" | 候选({cand_coll}) n={dec['n_candidate']} 采纳率={dec['rate_candidate']:.1%}"
+    )
     print(f"[AB] 决策：{dec['action']} — {dec['detail']}")
 
     if apply and dec["action"] != "keep_ab":
         if dec["action"] == "rollback_online":
-            st["ab"] = {k: (False if k == "enabled" else None if k in
-                            ("candidate_collection", "candidate_model") else v)
-                        for k, v in st["ab"].items()}
+            st["ab"] = {
+                k: (
+                    False
+                    if k == "enabled"
+                    else None if k in ("candidate_collection", "candidate_model") else v
+                )
+                for k, v in st["ab"].items()
+            }
             st["ab"]["enabled"] = False
             st["ab"]["candidate_collection"] = None
             st["ab"]["candidate_model"] = None
-            C.save_active(st)
+            cfg.save_active(st)
             closed_loop_runtime.reset_hubs()
             print(f"[AB] ✅ 已自动回滚：关闭灰度，保持基线 {base_coll}。")
         elif dec["action"] == "promote_full":
@@ -109,21 +119,30 @@ def monitor(apply: bool = False) -> dict:
             st["active_bge_model"] = ab["candidate_model"]
             st["version"] = int(st.get("version", 0)) + 1
             st["ab"] = {
-                "enabled": False, "candidate_collection": None,
-                "candidate_model": None, "traffic_ratio": 0.0,
-                "started_at": None, "baseline_metrics": None,
+                "enabled": False,
+                "candidate_collection": None,
+                "candidate_model": None,
+                "traffic_ratio": 0.0,
+                "started_at": None,
+                "baseline_metrics": None,
             }
-            C.save_active(st)
+            cfg.save_active(st)
             closed_loop_runtime.reset_hubs()
             print(f"[AB] ✅ 已全量晋升：{cand_coll} 成为新基线（version={st['version']}）。")
     elif apply and dec["action"] == "keep_ab":
         print("[AB] [dry-run/保持] 继续灰度，不写状态。")
 
-    C.log_run({"event": "ab_monitor", "action": dec["action"],
-               "n_baseline": dec["n_baseline"], "n_candidate": dec["n_candidate"],
-               "rate_baseline": round(dec["rate_baseline"], 4),
-               "rate_candidate": round(dec["rate_candidate"], 4),
-               "applied": apply})
+    cfg.log_run(
+        {
+            "event": "ab_monitor",
+            "action": dec["action"],
+            "n_baseline": dec["n_baseline"],
+            "n_candidate": dec["n_candidate"],
+            "rate_baseline": round(dec["rate_baseline"], 4),
+            "rate_candidate": round(dec["rate_candidate"], 4),
+            "applied": apply,
+        }
+    )
     return dec
 
 

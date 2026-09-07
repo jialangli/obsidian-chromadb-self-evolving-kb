@@ -1,7 +1,6 @@
 """
 混合检索模块单元测试
 """
-import pytest
 
 
 def test_hybrid_retriever_class_exists():
@@ -27,7 +26,7 @@ def test_tokenize_zh():
 
 def test_rrf_constants():
     """测试 RRF 相关常量"""
-    from kb_engine.hybrid_retrieve import RRF_K, BM25_K1, BM25_B, CANDIDATE_POOL
+    from kb_engine.hybrid_retrieve import BM25_B, BM25_K1, CANDIDATE_POOL, RRF_K
 
     assert RRF_K > 0
     assert BM25_K1 > 0

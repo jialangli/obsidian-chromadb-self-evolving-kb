@@ -10,8 +10,8 @@
     from kb_engine.config import settings
     print(settings.vault_path)
 """
+
 import os
-import json
 from pathlib import Path
 
 # 项目根目录（src 的父目录）
@@ -29,31 +29,26 @@ DEFAULTS = {
     "trace_log": str(PROJECT_ROOT / "data" / "logs" / "mcp_trace.jsonl"),
     "active_model_file": str(PROJECT_ROOT / "data" / "logs" / "active_model.json"),
     "models_dir": str(PROJECT_ROOT / "data" / "models"),
-
     # 集合名
     "collection_lsa": "kb_lsa",
     "collection_bge": "kb_bge",
     "collection_bge_candidate": "kb_bge_candidate",
-
     # 模型
     "bge_model_name": "BAAI/bge-small-zh-v1.5",
     "lsa_dimensions": 384,
     "bge_dimensions": 512,
-
     # 检索
     "top_k": 10,
     "rrf_k": 60,
     "chunk_size": 1500,
     "chunk_overlap": 200,
-
     # 服务
     "api_host": "127.0.0.1",
     "api_port": 8300,
-
     # 闭环
     "closed_loop_threshold": 8,  # 正例数触发微调
-    "dry_run": True,             # 默认演练模式
-    "hit_at_5_threshold": 0.6,   # 离线门禁 Hit@5 阈值
+    "dry_run": True,  # 默认演练模式
+    "hit_at_5_threshold": 0.6,  # 离线门禁 Hit@5 阈值
 }
 
 
@@ -72,7 +67,8 @@ class Settings:
         if yaml_path.exists():
             try:
                 import yaml
-                with open(yaml_path, "r", encoding="utf-8") as f:
+
+                with open(yaml_path, encoding="utf-8") as f:
                     user_config = yaml.safe_load(f) or {}
                 self._data.update(user_config)
             except ImportError:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 候选索引构建（自进化闭环第③步）
 ================================
@@ -8,22 +7,29 @@
 用法：
   python build_candidate_index.py --collection kb-engine_bge_ft_candidate --model models/bge_ft_candidate
 """
+
 import os
+
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-import sys
 import argparse
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
+
 from kb_engine.kb_embed import BgeEmbedder
 from kb_engine.sync_obsidian_to_chroma import (
-    get_vault_files, parse_markdown_to_chunks, bge_doc_text,
-    VAULT_PATH, EXCLUDE_DIRS, CHROMA_PATH,
+    CHROMA_PATH,
+    EXCLUDE_DIRS,
+    VAULT_PATH,
+    bge_doc_text,
+    get_vault_files,
+    parse_markdown_to_chunks,
 )
 
 
@@ -70,15 +76,14 @@ def build_candidate(collection_name: str, model_path: str, full_rebuild: bool = 
     )
     ids = [c["id"] for c in all_chunks]
     metas = [c["metadata"] for c in all_chunks]
-    BATCH = 500
-    for i in range(0, len(ids), BATCH):
-        b = slice(i, i + BATCH)
+    batch_size = 500  # noqa: N806
+    for i in range(0, len(ids), batch_size):
+        b = slice(i, i + batch_size)
         try:
             col.delete(ids=ids[b])
         except Exception:
             pass
-        col.add(ids=ids[b], documents=texts[b], metadatas=metas[b],
-                embeddings=vecs[b].tolist())
+        col.add(ids=ids[b], documents=texts[b], metadatas=metas[b], embeddings=vecs[b].tolist())
     print(f"[CAND] 候选集合完成：{col.count()} 块，维度 {vecs.shape[1]}")
     return {"built": True, "count": col.count(), "dim": int(vecs.shape[1])}
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Knowledge KB API 守护进程 (api_guard)
 ====================================
@@ -25,7 +24,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-BASE = Path(__file__).resolve().parent.parent          # D:\kb-engine
+BASE = Path(__file__).resolve().parent.parent  # D:\kb-engine
 LOG_DIR = BASE / "logs"
 LOG = LOG_DIR / "api_guard.log"
 LOCK = LOG_DIR / "api_guard.lock"
@@ -48,9 +47,9 @@ def acquire_lock() -> bool:
     try:
         f.seek(0, os.SEEK_END)
         if f.tell() == 0:
-            f.write(" ")          # 确保文件至少 1 字节，锁才能落在有效区域
+            f.write(" ")  # 确保文件至少 1 字节，锁才能落在有效区域
             f.flush()
-        f.seek(0)                 # 锁必须从文件开头起 1 字节，否则越界不互斥
+        f.seek(0)  # 锁必须从文件开头起 1 字节，否则越界不互斥
         msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)  # 非阻塞锁 1 字节
     except OSError:
         f.close()
@@ -59,7 +58,7 @@ def acquire_lock() -> bool:
     f.truncate()
     f.write(str(os.getpid()))
     f.flush()
-    _lock_file = f                # 全局持有，防止句柄回收导致锁释放
+    _lock_file = f  # 全局持有，防止句柄回收导致锁释放
     return True
 
 

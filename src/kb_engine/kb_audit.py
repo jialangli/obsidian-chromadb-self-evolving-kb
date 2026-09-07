@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Knowledge 知识库体检脚本
 扫描维度：
@@ -8,12 +7,14 @@ Knowledge 知识库体检脚本
   D. 内容异常（空文件/超短文件/重复文件名）
   E. 向量库索引一致性（ChromaDB 中的 source_file 是否仍存在于磁盘）
 """
+
 import re
 import sys
+from datetime import date
 from pathlib import Path
-from datetime import date, datetime
 
 import frontmatter
+
 from kb_engine.config import settings
 
 VAULT = Path(settings.vault_path)
@@ -41,15 +42,18 @@ stats = {"files": 0, "with_fm": 0, "links": 0}
 # 模板目录的占位符属于设计，跳过结构检查
 TEMPLATE_DIRS = ("模板",)
 
-md_files = [p for p in VAULT.rglob("*.md")
-            if ".obsidian" not in p.parts and ".trash" not in p.parts]
+md_files = [
+    p for p in VAULT.rglob("*.md") if ".obsidian" not in p.parts and ".trash" not in p.parts
+]
 stats["files"] = len(md_files)
 all_names = {p.stem for p in md_files}
 # Obsidian 链接解析集合：笔记相对路径 + 库中全部文件（含 PDF 等附件）
-all_paths = ({str(p.relative_to(VAULT)).replace("\\", "/")[:-3] for p in md_files}
-             | {str(p.relative_to(VAULT)).replace("\\", "/")
-                for p in VAULT.rglob("*")
-                if p.is_file() and ".obsidian" not in p.parts})
+all_paths = {str(p.relative_to(VAULT)).replace("\\", "/")[:-3] for p in md_files} | {
+    str(p.relative_to(VAULT)).replace("\\", "/")
+    for p in VAULT.rglob("*")
+    if p.is_file() and ".obsidian" not in p.parts
+}
+
 
 # 正文过短（无法产出内容块）的文件，不参与索引一致性比对
 def _has_content(p: Path) -> bool:
@@ -57,6 +61,7 @@ def _has_content(p: Path) -> bool:
         return len(frontmatter.load(str(p)).content.strip()) >= 50
     except Exception:
         return False
+
 
 parsed = []  # (path, post)
 
@@ -136,14 +141,21 @@ for p, post in parsed:
         d = date.fromisoformat(du)
         days = (TODAY - d).days
         mt = fm.get("memory_type")
-        threshold = {"fact": 180, "experience": 365, "preference": 180,
-                     "task_state": 30, "navigation": 180}.get(mt, 180)
+        threshold = {
+            "fact": 180,
+            "experience": 365,
+            "preference": 180,
+            "task_state": 30,
+            "navigation": 180,
+        }.get(mt, 180)
         if days > threshold:
             issues["B"].append((rel, f"已 {days} 天未更新（超过 {mt} 类型阈值 {threshold} 天）"))
 
 # ── C. 断链检查 ──────────────────────────────────────
 # Obsidian 解析规则：[[a/b]] 匹配任何以 a/b 结尾的路径；[[name]] 匹配文件名
 link_re = re.compile(r"\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]")
+
+
 def resolve(target: str) -> bool:
     if not target:
         return True
@@ -151,6 +163,7 @@ def resolve(target: str) -> bool:
     if target in all_paths or target in all_names:
         return True
     return any(fp == target or fp.endswith("/" + target) for fp in all_paths)
+
 
 for p, post in parsed:
     rel = str(p.relative_to(VAULT))
@@ -172,19 +185,24 @@ for p, _ in parsed:
 for d, stems in by_dir.items():
     dup = {s for s in stems if stems.count(s) > 1}
     if dup:
-        issues["D"].append((str(d.relative_to(VAULT)), f"同目录重复文件名: {', '.join(sorted(dup))}"))
+        issues["D"].append(
+            (str(d.relative_to(VAULT)), f"同目录重复文件名: {', '.join(sorted(dup))}")
+        )
 
 # ── E. 向量库索引一致性 ──────────────────────────────
 try:
     import chromadb
+
     client = chromadb.PersistentClient(path=CHROMA_PATH)
     coll = client.get_collection("kb-engine")
     metas = coll.get(include=["metadatas"])["metadatas"]
     indexed_files = {m.get("source_file", "") for m in metas}
     # 同步脚本排除了 模板 目录，索引对比也应排除
-    disk_files = {str(p.relative_to(VAULT)).replace("\\", "/")
-                  for p in md_files
-                  if TEMPLATE_DIRS[0] not in p.parts and _has_content(p)}
+    disk_files = {
+        str(p.relative_to(VAULT)).replace("\\", "/")
+        for p in md_files
+        if TEMPLATE_DIRS[0] not in p.parts and _has_content(p)
+    }
     stale = indexed_files - disk_files
     missing = disk_files - indexed_files
     if stale:
@@ -202,8 +220,13 @@ print("Knowledge 知识库体检报告")
 print(f"日期: {TODAY}  文件数: {stats['files']}  有frontmatter: {stats['with_fm']}")
 print(f"扫描 wikilink: {stats['links']} 条")
 print("=" * 64)
-titles = {"A": "A. frontmatter 结构错误", "B": "B. 过期/陈旧数据",
-          "C": "C. 断链", "D": "D. 内容异常", "E": "E. 向量库索引一致性"}
+titles = {
+    "A": "A. frontmatter 结构错误",
+    "B": "B. 过期/陈旧数据",
+    "C": "C. 断链",
+    "D": "D. 内容异常",
+    "E": "E. 向量库索引一致性",
+}
 for key in "ABCDE":
     print(f"\n{titles[key]}  ——  {len(issues[key])} 项")
     for rel, desc in issues[key][:30]:
@@ -213,8 +236,10 @@ for key in "ABCDE":
 
 total = sum(len(v) for v in issues.values())
 print("\n" + "=" * 64)
-print(f"总计发现问题: {total} 项（A:{len(issues['A'])} B:{len(issues['B'])} "
-      f"C:{len(issues['C'])} D:{len(issues['D'])} E:{len(issues['E'])}）")
+print(
+    f"总计发现问题: {total} 项（A:{len(issues['A'])} B:{len(issues['B'])} "
+    f"C:{len(issues['C'])} D:{len(issues['D'])} E:{len(issues['E'])}）"
+)
 
 # ── Markdown 报告 ────────────────────────────────────
 if "--md" in sys.argv:
@@ -246,13 +271,13 @@ if "--md" in sys.argv:
         "## A. 元数据错误",
         "",
     ]
-    lines += ([f"- `{r}` — {d}" for r, d in issues["A"]] or ["无 ✅"])
+    lines += [f"- `{r}` — {d}" for r, d in issues["A"]] or ["无 ✅"]
     lines += ["", "## B. 过期数据", ""]
-    lines += ([f"- `{r}` — {d}" for r, d in issues["B"]] or ["无 ✅"])
+    lines += [f"- `{r}` — {d}" for r, d in issues["B"]] or ["无 ✅"]
     lines += ["", "## D. 内容异常", ""]
-    lines += ([f"- `{r}` — {d}" for r, d in issues["D"]] or ["无 ✅"])
+    lines += [f"- `{r}` — {d}" for r, d in issues["D"]] or ["无 ✅"]
     lines += ["", "## E. 索引一致性", ""]
-    lines += ([f"- `{r}` — {d}" for r, d in issues["E"]] or ["无 ✅"])
+    lines += [f"- `{r}` — {d}" for r, d in issues["E"]] or ["无 ✅"]
     lines += [
         "",
         f"## C. 断链分析（{len(issues['C'])} 处引用，指向 {len(missing_agg)} 个不存在的笔记）",
@@ -264,7 +289,9 @@ if "--md" in sys.argv:
     ]
     for target, srcs in sorted(missing_agg.items(), key=lambda x: -len(x[1])):
         uniq = sorted(set(srcs))
-        lines.append(f"| `[[{target}]]` | {len(srcs)} | {'、'.join(uniq[:3])}"
-                     f"{' 等' if len(uniq) > 3 else ''} |")
+        lines.append(
+            f"| `[[{target}]]` | {len(srcs)} | {'、'.join(uniq[:3])}"
+            f"{' 等' if len(uniq) > 3 else ''} |"
+        )
     out_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\nMarkdown 报告已生成: {out_path}")

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 反馈数据集：把 feedback.jsonl 与精选 gold 集转成闭环可用的训练/评估数据
 ========================================================================
@@ -10,19 +9,18 @@
 
 import json
 import random
-from pathlib import Path
 
 import chromadb
 
-import kb_engine.closed_loop_config as C
+import kb_engine.closed_loop_config as cfg  # noqa: N812
 from kb_engine.sync_obsidian_to_chroma import CHROMA_PATH, COLLECTION_NAME_BGE
 
 
 def load_feedback() -> list:
-    if not C.FEEDBACK_PATH.exists():
+    if not cfg.FEEDBACK_PATH.exists():
         return []
     rows = []
-    with open(C.FEEDBACK_PATH, "r", encoding="utf-8") as f:
+    with open(cfg.FEEDBACK_PATH, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -48,9 +46,9 @@ def fetch_chunk_text(collection_name: str, source_file: str, header_path: str = 
     try:
         if header_path:
             res = col.get(
-                where={"$and": [{"source_file": source_file},
-                                {"header_path": header_path}]},
-                include=["documents"], limit=1,
+                where={"$and": [{"source_file": source_file}, {"header_path": header_path}]},
+                include=["documents"],
+                limit=1,
             )
             if res["ids"]:
                 return res["documents"][0]
@@ -73,8 +71,12 @@ def _all_chunk_texts(collection_name: str):
         return []
 
 
-def build_training_triples(feedback: list, collection_name: str = COLLECTION_NAME_BGE,
-                           max_neg_per_pos: int = 3, seed: int = 42) -> list:
+def build_training_triples(
+    feedback: list,
+    collection_name: str = COLLECTION_NAME_BGE,
+    max_neg_per_pos: int = 3,
+    seed: int = 42,
+) -> list:
     """
     反馈 → 对比学习三元组 (query, 正例文本, 负例文本)。
     同一 query 下：采纳(=true) 文档为正例，未采纳(=false) 文档为负例；
@@ -82,6 +84,7 @@ def build_training_triples(feedback: list, collection_name: str = COLLECTION_NAM
     """
     rng = random.Random(seed)
     from collections import defaultdict
+
     by_query = defaultdict(lambda: {"pos": [], "neg": []})
     for r in feedback:
         sf = r.get("source_file", "")
@@ -98,7 +101,7 @@ def build_training_triples(feedback: list, collection_name: str = COLLECTION_NAM
     for q, grp in by_query.items():
         if not grp["pos"]:
             continue
-        for (psf, ph) in grp["pos"]:
+        for psf, ph in grp["pos"]:
             pos_text = fetch_chunk_text(collection_name, psf, ph)
             if not pos_text:
                 continue
@@ -109,17 +112,21 @@ def build_training_triples(feedback: list, collection_name: str = COLLECTION_NAM
                 if cand != pos_text:
                     triples.append((q, pos_text, cand))
                 continue
-            for (nsf, nh) in negs[:max_neg_per_pos]:
+            for nsf, nh in negs[:max_neg_per_pos]:
                 neg_text = fetch_chunk_text(collection_name, nsf, nh)
                 if neg_text and neg_text != pos_text:
                     triples.append((q, pos_text, neg_text))
     return triples
 
 
-def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
-                                 cases: list = None, seed: int = 7,
-                                 max_hard_neg: int = 3, top_k_retrieve: int = 20,
-                                 retriever=None) -> list:
+def bootstrap_triples_from_cases(
+    collection_name: str = COLLECTION_NAME_BGE,
+    cases: list = None,
+    seed: int = 7,
+    max_hard_neg: int = 3,
+    top_k_retrieve: int = 20,
+    retriever=None,
+) -> list:
     """
     反馈不足时的 bootstrap：用精选 gold 集 (query, 期望 source_file 子串) 合成三元组。
 
@@ -133,6 +140,7 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
     if cases is None:
         try:
             from kb_engine.eval_retrieval import CASES
+
             cases = CASES
         except Exception:
             return []
@@ -149,14 +157,14 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
 
     if retriever is None:
         from kb_engine.hybrid_retrieve import HybridRetriever
+
         retriever = HybridRetriever()
 
     triples = []
     n_hard = 0
     for q, gold in cases:
         # 正例：source_file 含 gold 子串
-        pos_idx = [i for i, m in enumerate(metas)
-                   if gold in (m or {}).get("source_file", "")]
+        pos_idx = [i for i, m in enumerate(metas) if gold in (m or {}).get("source_file", "")]
         if not pos_idx:
             continue
         pi = rng.choice(pos_idx)
@@ -183,8 +191,11 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
             triples.append((q, pos_text, hard))
         else:
             # 退化：随机负例（保证三元组有效）
-            neg_pool = [i for i in range(len(docs)) if i != pi
-                        and gold not in (metas[i] or {}).get("source_file", "")]
+            neg_pool = [
+                i
+                for i in range(len(docs))
+                if i != pi and gold not in (metas[i] or {}).get("source_file", "")
+            ]
             if neg_pool:
                 ni = rng.choice(neg_pool)
                 triples.append((q, pos_text, [docs[ni]]))
@@ -192,10 +203,15 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
     return triples
 
 
-def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
-                                 max_per_file: int = 6, max_total: int = 400,
-                                 seed: int = 11, max_hard_neg: int = 2,
-                                 top_k_retrieve: int = 15, retriever=None) -> list:
+def structural_bootstrap_triples(
+    collection_name: str = COLLECTION_NAME_BGE,
+    max_per_file: int = 6,
+    max_total: int = 400,
+    seed: int = 11,
+    max_hard_neg: int = 2,
+    top_k_retrieve: int = 15,
+    retriever=None,
+) -> list:
     """
     用 Vault 自身结构合成大规模 (query→正例 section) 三元组，作为对比学习的训练燃料：
       - 每个 md 文件拆块后，取带 header_path 的内容块；以「末级标题」为 query、块正文为正例；
@@ -206,11 +222,16 @@ def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
     """
     rng = random.Random(seed)
     from kb_engine.sync_obsidian_to_chroma import (
-        get_vault_files, parse_markdown_to_chunks, bge_doc_text,
-        VAULT_PATH, EXCLUDE_DIRS,
+        EXCLUDE_DIRS,
+        VAULT_PATH,
+        bge_doc_text,
+        get_vault_files,
+        parse_markdown_to_chunks,
     )
+
     if retriever is None:
         from kb_engine.hybrid_retrieve import HybridRetriever
+
         retriever = HybridRetriever()
 
     files = get_vault_files(VAULT_PATH, EXCLUDE_DIRS)
@@ -221,9 +242,11 @@ def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
             chunks = parse_markdown_to_chunks(fp, VAULT_PATH)
         except Exception:
             continue
-        cand = [c for c in chunks
-                if c.get("metadata", {}).get("header_path")
-                and len(bge_doc_text(c)) >= 40]
+        cand = [
+            c
+            for c in chunks
+            if c.get("metadata", {}).get("header_path") and len(bge_doc_text(c)) >= 40
+        ]
         rng.shuffle(cand)
         for c in cand[:max_per_file]:
             hp = c["metadata"]["header_path"]
@@ -259,8 +282,10 @@ def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
 
 def make_training_examples(triples: list):
     """三元组 → sentence_transformers.InputExample 列表（anchor=带前缀的 query，positive=文档）。"""
-    from kb_engine.kb_embed import BGE_QUERY_PREFIX
     from sentence_transformers import InputExample
+
+    from kb_engine.kb_embed import BGE_QUERY_PREFIX
+
     examples = []
     for q, pos, _neg in triples:
         examples.append(InputExample(texts=[BGE_QUERY_PREFIX + q, pos]))

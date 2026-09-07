@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 闭环中央配置与状态管理
 ======================
@@ -49,9 +48,9 @@ DEFAULT_ACTIVE = {
 # 微调常呈现「hit1↑/MRR↑ 但 hit5 微降」的权衡，要求全指标零回归会永远卡住迭代。
 # 因此离线闸门只负责「放行入口」（主 KPI 不退化 + 整体质量仍优秀），真正的强护栏是
 # 线上 A/B 监控（AB_ROLLBACK_MAX_DROP=0.10）：候选进 20% 灰度后由真实用户采纳率裁决。
-EVAL_MIN_HIT5_FLOOR = 0.60          # 候选 Hit@5 绝对下限（不能"没那么差但还是差"）
+EVAL_MIN_HIT5_FLOOR = 0.60  # 候选 Hit@5 绝对下限（不能"没那么差但还是差"）
 EVAL_MIN_HIT5_PROMOTE_FLOOR = 0.85  # 晋升所需高绝对质量地板（微调后整体质量仍须优秀）
-EVAL_REGRESSION_TOLERANCE = 0.02    # 主 KPI(MRR) 相对基线的退化容忍度
+EVAL_REGRESSION_TOLERANCE = 0.02  # 主 KPI(MRR) 相对基线的退化容忍度
 # 早期迭代（bootstrap 合成数据驱动的微调）回归容忍度：允许候选相对基线有 <=2% 的小幅
 # 波动仍能进入灰度 A/B。真正的强护栏是线上 A/B 监控（AB_ROLLBACK_MAX_DROP=0.10），
 # 离线 2% 容忍仅用于让"近乎中性"的候选先进入灰度、开始积累真实反馈（数据飞轮燃料）。
@@ -59,10 +58,10 @@ EVAL_MIN_DELTA_MRR = 0.0
 EVAL_MIN_DELTA_HIT1 = 0.0
 
 # ── A/B 在线监控阈值（灰度期间按采纳率决策）───────────
-AB_TRAFFIC_RATIO = 0.20        # 默认灰度流量比例（20% 走候选）
-AB_MIN_SAMPLES_PER_ARM = 10    # 每臂最小样本数才做决策（不足则继续灰度）
-AB_PROMOTE_MIN_LIFT = 0.02     # 治疗组采纳率须高于对照组至少 2pp 才全量晋升（平局归于继续灰度）
-AB_ROLLBACK_MAX_DROP = 0.10    # 治疗组比对照组低超过该值 → 自动回滚
+AB_TRAFFIC_RATIO = 0.20  # 默认灰度流量比例（20% 走候选）
+AB_MIN_SAMPLES_PER_ARM = 10  # 每臂最小样本数才做决策（不足则继续灰度）
+AB_PROMOTE_MIN_LIFT = 0.02  # 治疗组采纳率须高于对照组至少 2pp 才全量晋升（平局归于继续灰度）
+AB_ROLLBACK_MAX_DROP = 0.10  # 治疗组比对照组低超过该值 → 自动回滚
 
 # ── 触发阈值 ──────────────────────────────────────────
 LOOP_MIN_POSITIVE_FEEDBACK = 8  # 至少多少条「采纳」正反馈才自动触发训练（否则等更多数据）
@@ -77,7 +76,7 @@ def load_active() -> dict:
     if not ACTIVE_MODEL_PATH.exists():
         return dict(DEFAULT_ACTIVE)
     try:
-        with open(ACTIVE_MODEL_PATH, "r", encoding="utf-8") as f:
+        with open(ACTIVE_MODEL_PATH, encoding="utf-8") as f:
             data = json.load(f)
         merged = dict(DEFAULT_ACTIVE)
         merged.update({k: v for k, v in data.items() if k != "ab"})
@@ -119,7 +118,7 @@ def read_runs() -> list:
     if not RUN_LOG_PATH.exists():
         return []
     rows = []
-    with open(RUN_LOG_PATH, "r", encoding="utf-8") as f:
+    with open(RUN_LOG_PATH, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
