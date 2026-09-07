@@ -18,6 +18,7 @@ import argparse
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 # 强制离线（须在 chromadb / huggingface 相关 import 之前）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -38,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 自进化闭环：A/B 灰度路由（与 MCP 服务端共用同一套 decide_variant）
 import kb_engine.closed_loop_runtime as closed_loop_runtime
+from kb_engine.config import settings
 from kb_engine.sync_obsidian_to_chroma import (
     CHROMA_PATH,
     COLLECTION_NAME,
@@ -174,8 +176,11 @@ def stats():
         "total_files": len(file_set),
         "memory_type_distribution": type_dist,
         "last_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "embedding": "bge-small-zh-v1.5(512d) 优先，LSA(384d) 回退",
-        "embedding_dim": 512,
+        "embedding": (
+            f"bge-small-zh-v1.5({settings.bge_dimensions}d) 优先，"
+            f"LSA({settings.lsa_dimensions}d) 回退"
+        ),
+        "embedding_dim": settings.bge_dimensions,
     }
 
 
@@ -208,8 +213,7 @@ def search(req: SearchRequest):
         model_version = bge_coll  # 集合名即版本标签，供 A/B 监控按臂区分采纳率
         hits = []
         for h in hr.search(req.query, top_k=req.top_k, where=hyb_where or None):
-            m = coll.get(ids=[h["id"]], include=["metadatas"])
-            meta = m["metadatas"][0] if m["metadatas"] else {}
+            # status/tags 已由检索器一并返回，无需再按 id 回查（原先是每条一次 coll.get）
             hits.append(
                 {
                     "similarity": h["similarity"],
@@ -218,8 +222,8 @@ def search(req: SearchRequest):
                     "source_file": h["source_file"],
                     "header_path": h["header_path"],
                     "memory_type": h["memory_type"],
-                    "status": meta.get("status", ""),
-                    "tags": meta.get("tags", ""),
+                    "status": h.get("status", ""),
+                    "tags": h.get("tags", ""),
                     "excerpt": h["excerpt"],
                 }
             )
@@ -326,16 +330,8 @@ def trigger_sync(req: SyncRequest):
     """触发同步（在子进程中运行，避免阻塞 API）"""
     import subprocess
 
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_obsidian_to_chroma.py")
-    cmd = [
-        os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "venv",
-            "Scripts",
-            "python.exe",
-        ),
-        script,
-    ]
+    # 用当前解释器执行，不要用写死的 venv/Scripts/python.exe（macOS/Linux/Docker 上不存在）
+    cmd = [sys.executable, "-m", "kb_engine.sync_obsidian_to_chroma"]
     if req.full:
         cmd.append("--full")
 
@@ -345,12 +341,15 @@ def trigger_sync(req: SyncRequest):
             capture_output=True,
             text=True,
             timeout=300,
-            cwd=os.path.dirname(script),
+            cwd=str(Path(__file__).resolve().parents[2]),
         )
-        # 同步后重置缓存（LSA 模型已重新训练，必须重新加载）
-        global _embedder, _collection
+        # 同步后重置缓存：LSA 模型重训过，检索器里的向量与 BM25 索引也全部失效。
+        # 三个缓存都要清，漏掉任何一个都会继续用旧索引直到重启。
+        global _embedder, _collection, _hybrid
         _embedder = None
         _collection = None
+        _hybrid = None
+        closed_loop_runtime.reset_hubs()
         return {
             "success": result.returncode == 0,
             "command": " ".join(cmd),
@@ -361,12 +360,14 @@ def trigger_sync(req: SyncRequest):
         raise HTTPException(status_code=500, detail=f"同步失败: {e}")
 
 
-if __name__ == "__main__":
+def main(argv: list = None):
+    """CLI 入口（pyproject: kb-api = kb_engine.kb_api_server:main）"""
     parser = argparse.ArgumentParser(description="Knowledge 知识库语义检索 API")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8300)
-    args = parser.parse_args()
+    parser.add_argument("--host", default=os.environ.get("KB_API_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("KB_API_PORT", 8300)))
+    args = parser.parse_args(argv)
 
+    settings.ensure_dirs()
     print(f"{'='*60}")
     print("Knowledge 知识库语义检索 API")
     print(f"  地址:     http://{args.host}:{args.port}")
@@ -376,3 +377,7 @@ if __name__ == "__main__":
     print(f"{'='*60}")
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

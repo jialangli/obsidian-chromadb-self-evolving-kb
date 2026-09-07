@@ -296,6 +296,7 @@ def build_bge_collection(all_chunks: list, full_rebuild: bool = False) -> dict:
 
 def sync(full_rebuild: bool = False):
     """执行同步"""
+    settings.ensure_dirs()
     print(f"{'='*60}")
     print("Knowledge 知识库 → ChromaDB 同步")
     print(f"  Vault:       {VAULT_PATH}")
@@ -405,6 +406,11 @@ def sync(full_rebuild: bool = False):
     return sync_record
 
 
+def main(argv: list = None):
+    """CLI 入口（pyproject: kb-sync = kb_engine.sync_obsidian_to_chroma:main）"""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    sync(full_rebuild="--full" in argv)
+
+
 if __name__ == "__main__":
-    full_rebuild = "--full" in sys.argv
-    sync(full_rebuild=full_rebuild)
+    main()

@@ -57,11 +57,9 @@ def build_index():
     os.chdir(os.path.dirname(__file__))  # 切换到项目根目录
 
     try:
-        from kb_engine.sync_obsidian_to_chroma import main as sync_main
+        from kb_engine.sync_obsidian_to_chroma import sync
 
-        # 模拟命令行参数
-        sys.argv = ["kb-sync", "--full"]
-        sync_main()
+        sync(full_rebuild=True)
         print("   ✓ 索引构建完成")
         return True
     except Exception as e:
@@ -131,9 +129,10 @@ def main():
     print("  🎉 快速入门完成！")
     print("=" * 60)
     print("\n下一步：")
-    print("  • 修改 config.example.yaml 为 config.yaml，指向你自己的 Vault")
-    print("  • 运行 python src/sync_obsidian_to_chroma.py 同步你的知识库")
-    print("  • 运行 python src/kb_api_server.py 启动 HTTP API 服务")
+    print("  • 复制 config.example.yaml 为 config.yaml，把 vault_path 指向你自己的 Vault")
+    print("  • 运行 kb sync --full 同步你的知识库（或 python -m kb_engine.sync_obsidian_to_chroma --full）")
+    print("  • 运行 kb api 启动 HTTP API 服务，浏览器打开 /docs 查看接口")
+    print("  • 运行 kb eval 查看检索效果（会顺带自检 gold 集可达性）")
     print("  • 配置 MCP Server 接入你的 AI Agent")
     print("\n详细文档见 README.md 或 index.html")
 

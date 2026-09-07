@@ -38,9 +38,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
-from mcp.server.mcpserver import MCPServer
+
+# MCP Python SDK 在 v2 把 FastMCP 更名为 MCPServer，模块从 mcp.server.fastmcp
+# 迁到 mcp.server.mcpserver。依赖声明是 mcp>=1.0.0，实际可能装到 v1 或 v2，
+# 这里双向兼容，避免「换个环境就 ImportError」。
+try:
+    from mcp.server.mcpserver import MCPServer
+except ImportError:  # MCP SDK v1.x
+    from mcp.server.fastmcp import FastMCP as MCPServer
 
 import kb_engine.closed_loop_config as cfg  # noqa: N812
+from kb_engine.config import settings
 
 # 自进化闭环：A/B 灰度路由 + 按臂打 model_version 标签
 import kb_engine.closed_loop_runtime as closed_loop_runtime
@@ -51,14 +59,30 @@ from kb_engine.sync_obsidian_to_chroma import (
     LsaEmbedder,
 )
 
-TRACE_PATH = Path(r"D:\kb-engine\logs\mcp_trace.jsonl")
-FEEDBACK_PATH = Path(r"D:\kb-engine\logs\feedback.jsonl")
+# 路径统一取自闭环配置（可由 KB_ROOT 环境变量覆盖），不再硬编码本机绝对路径。
+# 注意：MCP 写入的反馈必须与闭环读取的是同一个文件，否则飞轮断链。
+TRACE_PATH = cfg.TRACE_PATH
+FEEDBACK_PATH = cfg.FEEDBACK_PATH
 
-server = MCPServer(
-    name="kb-engine",
-    title="Knowledge 知识库",
-    description="Knowledge 教育产品知识库的语义检索服务（领域文档/产品/PRD/方法论等）",
-    instructions=(
+def _call_with_fallback(fn, kwargs: dict, order: tuple):
+    """
+    逐级降级调用：MCP SDK 各版本对 title/description 等参数的支持不一致，
+    老版本遇到不认识的关键字会抛 TypeError。这里按 order 依次裁剪参数重试。
+    """
+    last = None
+    for keys in order:
+        try:
+            return fn(**{k: kwargs[k] for k in keys if k in kwargs})
+        except TypeError as e:
+            last = e
+    raise last
+
+
+_SERVER_KWARGS = {
+    "name": "kb-engine",
+    "title": "Knowledge 知识库",
+    "description": "Knowledge 教育产品知识库的语义检索服务（领域文档/产品/PRD/方法论等）",
+    "instructions": (
         "这是 Knowledge 教育产品知识库。使用 search_knowledge_base 做自然语言语义检索，"
         "使用 filter_knowledge_base 按元数据（memory_type/status）过滤条目，"
         "使用 knowledge_base_stats 查看库的规模。"
@@ -66,7 +90,35 @@ server = MCPServer(
         "请调用 record_retrieval_feedback(result_id=..., adopted=true) 记录正反馈，"
         "无用结果记录 adopted=false。这有助于持续优化检索质量。"
     ),
+}
+server = _call_with_fallback(
+    MCPServer,
+    _SERVER_KWARGS,
+    order=(
+        ("name", "title", "description", "instructions"),
+        ("name", "description", "instructions"),
+        ("name", "instructions"),
+        ("name",),
+    ),
 )
+
+
+def _tool(**kwargs):
+    """注册工具，同样按 SDK 版本能力降级 title/description"""
+
+    def deco(fn):
+        return _call_with_fallback(
+            server.tool,
+            kwargs,
+            order=(
+                ("name", "title", "description"),
+                ("name", "description"),
+                ("name",),
+                (),
+            ),
+        )(fn)
+
+    return deco
 
 # ── 懒加载全局状态 ────────────────────────────────────
 # 注意：同步脚本用 --full 会删除并重建 collection，磁盘上的模型文件也会被覆盖。
@@ -221,7 +273,7 @@ def _fmt_results(results: dict, top_k: int) -> str:
 
 
 # ── 工具 1：语义检索 ──────────────────────────────────
-@server.tool(
+@_tool(
     name="search_knowledge_base",
     title="知识库语义检索",
     description=(
@@ -303,7 +355,7 @@ def search_knowledge_base(query: str, top_k: int = 5, memory_type: str = None) -
 
 
 # ── 工具 2：元数据过滤 ────────────────────────────────
-@server.tool(
+@_tool(
     name="filter_knowledge_base",
     title="知识库元数据过滤",
     description=(
@@ -340,16 +392,17 @@ def filter_knowledge_base(
     kwargs = {"include": ["documents", "metadatas"], "limit": limit}
     if where:
         kwargs["where"] = where
-    if contains:
+    # Chroma 的 get() 不接受 where 与 where_document 同时出现。
+    # 两者都给了就只按 where 查库，contains 交给下面的 Python 侧兜底过滤。
+    if contains and not where:
         kwargs["where_document"] = {"$contains": contains}
 
     results = with_retry(lambda: state["collection"].get(**kwargs))
     items = []
     for i in range(len(results["ids"])):
         meta = results["metadatas"][i]
-        doc = results["documents"][i]
-        # where_document 与 where 不能同时传给 get()，contains 时在 Python 侧兜底
-        if contains and not kwargs.get("where_document") and contains not in doc:
+        doc = results["documents"][i] or ""
+        if contains and contains not in doc:
             continue
         items.append(
             {
@@ -369,7 +422,7 @@ def filter_knowledge_base(
 
 
 # ── 工具 3：统计概览 ──────────────────────────────────
-@server.tool(
+@_tool(
     name="knowledge_base_stats",
     title="知识库统计",
     description="返回知识库规模统计：内容块总数、文件数、记忆类型分布。",
@@ -395,7 +448,10 @@ def knowledge_base_stats() -> str:
             "total_chunks": len(all_meta["ids"]),
             "total_files": len(files),
             "memory_type_distribution": dist,
-            "embedding": f"bge 激活集合={st['active_bge_collection']}（base=kb-engine_bge），LSA(384d) 回退",
+            "embedding": (
+                f"bge 激活集合={st['active_bge_collection']}"
+                f"（base={settings.collection_bge}），LSA({settings.lsa_dimensions}d) 回退"
+            ),
             "self_evolving_loop": ab_status,
             "last_sync": datetime.fromtimestamp(Path(VECTORIZER_PATH).stat().st_mtime).isoformat(
                 timespec="minutes"
@@ -407,7 +463,7 @@ def knowledge_base_stats() -> str:
 
 
 # ── 工具 4：反馈埋点（自进化飞轮第一步）────────────────
-@server.tool(
+@_tool(
     name="record_retrieval_feedback",
     title="记录检索结果反馈",
     description=(
@@ -448,7 +504,7 @@ def record_retrieval_feedback(result_id: str, adopted: bool, note: str = "") -> 
 
 
 # ── 工具 5：反馈统计 ──────────────────────────────────
-@server.tool(
+@_tool(
     name="feedback_stats",
     title="检索反馈统计",
     description=(
@@ -524,4 +580,4 @@ def feedback_stats(top_n: int = 5) -> str:
 
 
 if __name__ == "__main__":
-    server.run("stdio")
+    server.run(transport="stdio")

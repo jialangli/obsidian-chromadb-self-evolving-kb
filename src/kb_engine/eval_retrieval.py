@@ -28,7 +28,7 @@ CASES = [
     ("混合检索相比单一检索的优势", "技术/混合检索方案"),
     # ── 方法论类示例 ──
     ("如何设计一套有效的知识分类体系", "方法论/知识分类方法论"),
-    ("知识库治理的最佳实践有哪些", "方法论/知识库治理指南"),
+    ("知识库治理的最佳实践有哪些", "方法论/知识库治理方法论"),
     ("如何评估检索系统的效果", "方法论/检索评估方法"),
     # ── 运营类示例 ──
     ("新用户如何快速上手使用系统", "运营/新用户入门指南"),
@@ -62,8 +62,29 @@ def evaluate(r, mode_name, searcher):
     return hit1, hit5, rr / n
 
 
-if __name__ == "__main__":
+def audit_cases(r: HybridRetriever) -> list:
+    """
+    评估前自检：报告 gold 在库中不可达的用例。
+    不可达的 gold 会永久无法命中，只会把指标天花板压低、让闸门测量噪声 —— 必须显式暴露。
+    """
+    indexed = {m.get("source_file", "") for m in (r.metas or [])}
+    dead = [(q, gold) for q, gold in CASES if not any(gold in sf for sf in indexed)]
+    if dead:
+        print(f"\n⚠  gold 集自检：{len(dead)}/{len(CASES)} 条 gold 在库中不可达")
+        for q, gold in dead:
+            print(f"    - {q!r} -> 期望含 {gold!r}（库中没有匹配该子串的 source_file）")
+        print("    这些用例永远无法命中，会持续压低 Hit@5；请补笔记或修正 gold。")
+    return dead
+
+
+def main(argv: list = None):
+    """CLI 入口（pyproject: kb-eval = kb_engine.eval_retrieval:main）"""
+    argv = sys.argv[1:] if argv is None else list(argv)
     r = HybridRetriever()
+    if "--audit-cases" in argv:
+        audit_cases(r)
+        return
+    audit_cases(r)
     a = evaluate(
         r, "改造前 · 原始 LSA (collection.query)", lambda q, top_k: r.search_legacy(q, top_k=top_k)
     )
@@ -74,3 +95,7 @@ if __name__ == "__main__":
     print(f"Hit@1: {a[0]}/{len(CASES)} -> {b[0]}/{len(CASES)}  ({(b[0]-a[0])*100//len(CASES):+d}%)")
     print(f"Hit@5: {a[1]}/{len(CASES)} -> {b[1]}/{len(CASES)}  ({(b[1]-a[1])*100//len(CASES):+d}%)")
     print(f"MRR  : {a[2]:.3f} -> {b[2]:.3f}  ({b[2]-a[2]:+.3f})")
+
+
+if __name__ == "__main__":
+    main()

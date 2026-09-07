@@ -14,8 +14,8 @@
 import os
 from pathlib import Path
 
-# 项目根目录（src 的父目录）
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 项目根目录：src/kb_engine/config.py → parents[0]=kb_engine, [1]=src, [2]=项目根
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 默认配置
 DEFAULTS = {
@@ -59,30 +59,44 @@ class Settings:
         self._data = dict(DEFAULTS)
         self._load_yaml()
         self._load_env()
-        self._ensure_dirs()
+        # 注意：不在 __init__ 里建目录 —— import 本模块不应有副作用。
+        # 需要写盘的地方显式调用 settings.ensure_dirs()。
 
     def _load_yaml(self):
         """从 config.yaml 加载（如果存在）"""
         yaml_path = PROJECT_ROOT / "config.yaml"
-        if yaml_path.exists():
-            try:
-                import yaml
-
-                with open(yaml_path, encoding="utf-8") as f:
-                    user_config = yaml.safe_load(f) or {}
-                self._data.update(user_config)
-            except ImportError:
-                pass  # pyyaml 未安装时跳过
-            except Exception:
-                pass
+        if not yaml_path.exists():
+            return
+        try:
+            import yaml
+        except ImportError:
+            print(f"[CONFIG] 跳过 {yaml_path}：pyyaml 未安装")
+            return
+        try:
+            with open(yaml_path, encoding="utf-8") as f:
+                user_config = yaml.safe_load(f) or {}
+        except Exception as e:
+            # 静默失败会让用户改了配置却毫无反应，极难自查 —— 必须显式告警
+            print(f"[CONFIG] 警告：{yaml_path} 解析失败，已回退默认值（{e}）")
+            return
+        if not isinstance(user_config, dict):
+            print(f"[CONFIG] 警告：{yaml_path} 顶层不是键值映射，已忽略")
+            return
+        unknown = set(user_config) - set(DEFAULTS)
+        if unknown:
+            # 拼错的配置项同样属于「改了没反应」的重灾区
+            print(f"[CONFIG] 警告：{yaml_path} 含未知配置项 {sorted(unknown)}，已忽略")
+        self._data.update({k: v for k, v in user_config.items() if k in DEFAULTS})
 
     def _load_env(self):
         """从环境变量加载（KB_ 前缀）"""
         for key in self._data:
             env_key = "KB_" + key.upper()
-            if env_key in os.environ:
-                val = os.environ[env_key]
-                # 类型转换
+            if env_key not in os.environ:
+                continue
+            val = os.environ[env_key]
+            # 转换失败不要中断启动，但仍要告知用户，避免「设了环境变量没生效」
+            try:
                 if isinstance(self._data[key], bool):
                     self._data[key] = val.lower() in ("1", "true", "yes")
                 elif isinstance(self._data[key], int):
@@ -91,17 +105,16 @@ class Settings:
                     self._data[key] = float(val)
                 else:
                     self._data[key] = val
+            except (TypeError, ValueError) as e:
+                print(f"[CONFIG] 警告：环境变量 {env_key}={val!r} 转换失败（{e}），已忽略")
 
-    def _ensure_dirs(self):
-        """确保必要的目录存在"""
+    def ensure_dirs(self):
+        """确保必要的目录存在（写盘前显式调用）"""
         for key in ("chroma_path", "log_path", "models_dir"):
-            path = Path(self._data[key])
-            if key == "log_path":
-                path.mkdir(parents=True, exist_ok=True)
-            elif key == "chroma_path":
-                path.mkdir(parents=True, exist_ok=True)
-            elif key == "models_dir":
-                path.mkdir(parents=True, exist_ok=True)
+            try:
+                Path(self._data[key]).mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                print(f"[CONFIG] 警告：无法创建目录 {key}={self._data[key]}（{e}）")
 
     def __getattr__(self, name):
         if name.startswith("_"):

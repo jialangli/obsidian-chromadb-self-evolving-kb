@@ -221,6 +221,9 @@ class HybridRetriever:
             "source_file": meta.get("source_file", ""),
             "header_path": meta.get("header_path", ""),
             "memory_type": meta.get("memory_type", ""),
+            # 调用方常要展示 status/tags；在此一并返回，避免每条结果再回查一次库（N+1）
+            "status": meta.get("status", ""),
+            "tags": meta.get("tags", ""),
             "excerpt": (doc or "")[:QUERY_EXCERPT_LEN],
         }
 

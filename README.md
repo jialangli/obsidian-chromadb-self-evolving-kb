@@ -17,7 +17,7 @@
 - **混合检索**：BGE 语义向量 + BM25 关键词，通过 RRF 融合排序，兼顾语义泛化与专有名词精确匹配
 - **自动降级**：BGE 模型不可用时无缝降级为 LSA 混合检索，服务永不下线
 - **自进化闭环**：从真实使用中收集采纳反馈 → 自动微调嵌入模型 → 离线门禁 + 在线灰度双重验证 → 自动晋升或回滚
-- **双协议出口**：MCP Server（stdio，5 个工具）+ FastAPI（HTTP，4 个端点），Agent 与通用程序都能接入
+- **双协议出口**：MCP Server（stdio，5 个工具）+ FastAPI（HTTP，6 个端点），Agent 与通用程序都能接入
 - **治理元数据**：多分类 frontmatter 治理，每条检索结果携带可信度标记
 
 ## 快速开始
@@ -48,6 +48,8 @@ cp config.example.yaml config.yaml
 
 # 2. 编辑 config.yaml，将 vault_path 指向你的 Obsidian Vault
 #    vault_path: "/path/to/your/obsidian-vault"
+#    注意：config.yaml 必须放在项目根目录（不是 src/ 下）；
+#          键名拼错或 YAML 解析失败会在启动时打印警告，不会静默忽略。
 
 # 3. 全量同步构建索引
 python -m kb_engine.sync_obsidian_to_chroma --full
@@ -191,7 +193,7 @@ obsidian-chromadb-self-evolving-kb/
 
 ```
 ⑤ 消费层 · Consumers        MCP 客户端 / TRAE / 任意 HTTP Agent
-④ 服务层 · Services         MCP Server (stdio, 5 tools) + FastAPI (:8300, 4 endpoints)
+④ 服务层 · Services         MCP Server (stdio, 5 tools) + FastAPI (:8300, 6 endpoints)
 ③ 检索层 · Retrieval        Hybrid Retriever (BGE + BM25 → RRF)
 ② 存储层 · Storage           ChromaDB (kb_bge 主通道 / kb_lsa 兜底)
 ① 数据层 · Data              Obsidian Vault (Markdown + frontmatter 治理)
@@ -355,20 +357,24 @@ make clean             # 清理缓存
 
 | 工具 | 说明 |
 |------|------|
-| `search_knowledge_base` | 语义检索（自然语言查询） |
-| `filter_knowledge_base` | 元数据过滤（按类型/状态/标签） |
-| `knowledge_base_stats` | 知识库统计概览 |
-| `get_knowledge_entry` | 获取单条笔记全文 |
-| `mark_feedback` | 标记检索结果是否有用（飞轮反馈） |
+| `search_knowledge_base` | 语义检索（自然语言查询），每条结果带 `result_id` |
+| `filter_knowledge_base` | 元数据过滤（按类型/状态/来源文件/正文关键词） |
+| `knowledge_base_stats` | 知识库统计概览（含灰度 A/B 状态） |
+| `record_retrieval_feedback` | 记录检索结果是否被采纳（飞轮反馈，传 `result_id` + `adopted`） |
+| `feedback_stats` | 反馈统计（采纳率、被采纳/被忽略最多的文档） |
 
 ## API 端点
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/health` | GET | 健康检查 |
-| `/search` | GET/POST | 混合检索 |
-| `/stats` | GET | 统计概览 |
-| `/feedback` | POST | 提交反馈 |
+| `/` | GET | 服务信息与端点索引 |
+| `/stats` | GET | 统计概览（块数、文件数、类型分布） |
+| `/search` | POST | 混合检索（支持 `memory_type` / `source_file` 过滤） |
+| `/filter` | POST | 元数据过滤检索 |
+| `/sync` | POST | 触发同步（`{"full": true}` 为全量重建），同步后自动刷新检索器缓存 |
+
+> 反馈埋点走 MCP 的 `record_retrieval_feedback`，HTTP 侧不提供 `/feedback` 端点。
 
 详细文档见 `http://localhost:8300/docs`（启动后访问）。
 

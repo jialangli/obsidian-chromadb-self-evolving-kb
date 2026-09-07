@@ -32,8 +32,51 @@ def load_feedback() -> list:
     return rows
 
 
+_CLIENT = None
+
+
 def _client():
-    return chromadb.PersistentClient(path=CHROMA_PATH)
+    """复用 ChromaDB 客户端。
+
+    原先每次调用都新建一个 PersistentClient，而 fetch_chunk_text 又是在
+    「case × 召回条数」的双重循环里被调用的，12 条评测集 × 20 条召回就是
+    240 次客户端创建 + 240 次集合查询，慢得没有道理。
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = chromadb.PersistentClient(path=CHROMA_PATH)
+    return _CLIENT
+
+
+def build_text_index(collection_name: str = COLLECTION_NAME_BGE) -> dict:
+    """
+    一次性把集合内全部 chunk 读进内存，建立
+    (source_file, header_path) -> 完整文本 的索引。
+
+    供 bootstrap 类函数在循环内做 O(1) 反查，替代逐条 fetch_chunk_text。
+    """
+    try:
+        col = _client().get_collection(collection_name)
+        res = col.get(include=["documents", "metadatas"], limit=col.count())
+    except Exception:
+        return {}
+    index = {}
+    for doc, meta in zip(res["documents"] or [], res["metadatas"] or []):
+        meta = meta or {}
+        sf = meta.get("source_file", "")
+        if not sf:
+            continue
+        index.setdefault((sf, meta.get("header_path", "")), doc)
+        # 兜底：header_path 对不上时，退化为只按 source_file 取第一条
+        index.setdefault((sf, ""), doc)
+    return index
+
+
+def lookup_text(index: dict, source_file: str, header_path: str = "") -> str:
+    """按 (source_file, header_path) 反查完整文本；兜底仅按 source_file。"""
+    if not source_file:
+        return None
+    return index.get((source_file, header_path)) or index.get((source_file, ""))
 
 
 def fetch_chunk_text(collection_name: str, source_file: str, header_path: str = "") -> str:
@@ -154,6 +197,8 @@ def bootstrap_triples_from_cases(
 
     docs = all_docs["documents"] or []
     metas = all_docs["metadatas"] or []
+    # 一次建索引，循环内 O(1) 反查（原实现每条召回都要打一次库）
+    text_index = build_text_index(collection_name)
 
     if retriever is None:
         from kb_engine.hybrid_retrieve import HybridRetriever
@@ -178,7 +223,7 @@ def bootstrap_triples_from_cases(
                 sf = h.get("source_file") or ""
                 if gold in sf:
                     continue
-                full = fetch_chunk_text(collection_name, sf, h.get("header_path") or "")
+                full = lookup_text(text_index, sf, h.get("header_path") or "")
                 if full and full != pos_text:
                     hard.append(full)
                 if len(hard) >= max_hard_neg:
@@ -234,6 +279,7 @@ def structural_bootstrap_triples(
 
         retriever = HybridRetriever()
 
+    text_index = build_text_index(collection_name)
     files = get_vault_files(VAULT_PATH, EXCLUDE_DIRS)
     triples = []
     seen_q = set()
@@ -264,7 +310,7 @@ def structural_bootstrap_triples(
                     sf = h.get("source_file") or ""
                     if sf == sf_self:
                         continue
-                    full = fetch_chunk_text(collection_name, sf, h.get("header_path") or "")
+                    full = lookup_text(text_index, sf, h.get("header_path") or "")
                     if full and full != pos:
                         hard.append(full)
                     if len(hard) >= max_hard_neg:

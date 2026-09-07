@@ -14,23 +14,30 @@
 """
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
+from kb_engine.config import PROJECT_ROOT, settings
+
 # ── 路径 ──────────────────────────────────────────────
-KB_ROOT = Path(r"D:\kb-engine")
-SCRIPTS = KB_ROOT / "scripts"
-LOGS = KB_ROOT / "logs"
-MODELS_DIR = KB_ROOT / "models"
+# 全部从 settings 派生（与 config.py 同一套路径体系），不再硬编码本机绝对路径。
+# 需要把闭环数据放到别处时，用 KB_ROOT 环境变量覆盖。
+_KB_ROOT_ENV = os.environ.get("KB_ROOT")
+KB_ROOT = Path(_KB_ROOT_ENV) if _KB_ROOT_ENV else PROJECT_ROOT / "data"
+LOGS = Path(settings.log_path) if not _KB_ROOT_ENV else KB_ROOT / "logs"
+MODELS_DIR = Path(settings.models_dir) if not _KB_ROOT_ENV else KB_ROOT / "models"
 FEEDBACK_PATH = LOGS / "feedback.jsonl"
+TRACE_PATH = LOGS / "mcp_trace.jsonl"
 ACTIVE_MODEL_PATH = LOGS / "active_model.json"
 RUN_LOG_PATH = LOGS / "closed_loop_runs.jsonl"
 
 # ── 现状默认值（与未接入闭环时一致）────────────────────
+# 集合名必须取自 settings，否则闭环会指向一个同步脚本从未创建过的集合。
 DEFAULT_ACTIVE = {
     "version": 0,
-    "active_bge_collection": "kb-engine_bge",
-    "active_bge_model": "BAAI/bge-small-zh-v1.5",
+    "active_bge_collection": settings.collection_bge,
+    "active_bge_model": settings.bge_model_name,
     "ab": {
         "enabled": False,
         "candidate_collection": None,
@@ -102,7 +109,7 @@ def next_model_version() -> int:
 
 def candidate_collection_name(version: int) -> str:
     """候选集合命名：与 base 集合区分，绝不冲突。"""
-    return f"kb-engine_bge_ft_v{version}"
+    return f"{settings.collection_bge}_ft_v{version}"
 
 
 def log_run(record: dict):

@@ -43,8 +43,13 @@ def run(
     epochs: int = 1,
     lr: float = 2e-5,
     batch_size: int = 16,
-    scale: float = 1.0,
+    scale: float = None,
 ) -> dict:
+    """
+    scale 为 None 时沿用 fine_tune_bge.train 的默认值（20.0）。
+    早期这里写死 1.0 并显式覆盖下去，导致 logits 挤在 [-1,1]、梯度极弱，
+    也就是「训了等于没训」——除非明确要复现该行为，否则不要传 1.0。
+    """
     min_positive = min_positive or cfg.LOOP_MIN_POSITIVE_FEEDBACK
     st = cfg.load_active()
     feedback = feedback_dataset.load_feedback()
@@ -90,6 +95,7 @@ def run(
     # ── 3. 对比学习微调 ──
     version = cfg.next_model_version()
     checkpoint = str(cfg.MODELS_DIR / f"bge_ft_v{version}")
+    ft_kwargs = {} if scale is None else {"scale": scale}
     ft = fine_tune_bge.train(
         triples,
         checkpoint,
@@ -97,7 +103,7 @@ def run(
         epochs=epochs,
         lr=lr,
         batch_size=batch_size,
-        scale=scale,
+        **ft_kwargs,
     )
     print(f"[LOOP] 微调完成: {ft['out_dir']}")
 
@@ -179,8 +185,8 @@ if __name__ == "__main__":
     ap.add_argument(
         "--scale",
         type=float,
-        default=1.0,
-        help="余弦相似度缩放（MNRL 温度倒数，默认 1.0 原始余弦）",
+        default=None,
+        help="余弦相似度缩放（MNRL 温度倒数）；不指定则使用 fine_tune_bge 的默认值 20.0",
     )
     ap.add_argument(
         "--batch-size", type=int, default=16, help="微调批大小（越大 in-batch 负例越多）"
