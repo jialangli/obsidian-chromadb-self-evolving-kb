@@ -12,9 +12,9 @@
 """
 import random
 
-import closed_loop_config as C
-from hybrid_retrieve import HybridRetriever
-from kb_embed import BgeEmbedder
+import kb_engine.closed_loop_config as C
+from kb_engine.hybrid_retrieve import HybridRetriever
+from kb_engine.kb_embed import BgeEmbedder
 
 
 # bge 集合名 → 检索器实例 的缓存

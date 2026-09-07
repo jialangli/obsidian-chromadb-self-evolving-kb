@@ -22,14 +22,16 @@
 git clone https://github.com/jialangli/obsidian-chromadb-self-evolving-kb.git
 cd obsidian-chromadb-self-evolving-kb
 
-# 2. 安装依赖
-pip install -r requirements.txt
+# 2. 安装（推荐开发模式）
+pip install -e ".[dev]"
 
 # 3. 一键运行快速入门（自动构建示例索引 + 演示检索）
 python quickstart.py
 ```
 
 就是这么简单！`quickstart.py` 会用 `examples/vault/` 下的示例笔记构建 LSA 向量索引（无需下载任何模型），然后演示混合检索效果。
+
+> 也可以用 `pip install -r requirements.txt` 只装运行时依赖。
 
 ### 接入你自己的知识库
 
@@ -41,12 +43,20 @@ cp config.example.yaml config.yaml
 #    vault_path: "/path/to/your/obsidian-vault"
 
 # 3. 全量同步构建索引
-cd src
-python sync_obsidian_to_chroma.py --full
+python -m kb_engine.sync_obsidian_to_chroma --full
 
 # 4. 启动 HTTP API 服务
-python kb_api_server.py
+python -m kb_engine.kb_api_server
 # 浏览器打开 http://localhost:8300/docs 查看 API 文档
+```
+
+安装后也可以直接用 CLI 命令：
+
+```bash
+kb-sync --full     # 等同于 python -m kb_engine.sync_obsidian_to_chroma
+kb-api             # 等同于 python -m kb_engine.kb_api_server
+kb-audit           # 等同于 python -m kb_engine.kb_audit
+kb-eval            # 等同于 python -m kb_engine.eval_retrieval
 ```
 
 ### 接入 MCP 客户端
@@ -58,7 +68,8 @@ python kb_api_server.py
   "mcpServers": {
     "kb-engine": {
       "command": "python",
-      "args": ["-u", "/path/to/src/kb_mcp_server.py"]
+      "args": ["-m", "kb_engine.kb_mcp_server"],
+      "cwd": "/path/to/obsidian-chromadb-self-evolving-kb"
     }
   }
 }
@@ -70,13 +81,17 @@ python kb_api_server.py
 obsidian-chromadb-self-evolving-kb/
 ├── index.html                  # 架构文档（GitHub Pages 在线预览）
 ├── README.md                   # 项目说明（本文件）
+├── CHANGELOG.md                # 版本变更记录
+├── CONTRIBUTING.md             # 贡献指南
 ├── LICENSE                     # MIT License
-├── requirements.txt            # Python 依赖
+├── pyproject.toml              # 项目配置（依赖、构建、工具）
+├── requirements.txt            # 运行时依赖清单
 ├── config.example.yaml         # 配置模板
 ├── quickstart.py               # 一键快速入门脚本
 ├── .gitignore
 │
-├── src/                        # 核心代码
+├── src/kb_engine/              # 主包（src layout）
+│   ├── __init__.py             # 包初始化，暴露 settings
 │   ├── config.py               # 统一配置模块（环境变量 + config.yaml + 默认值）
 │   ├── sync_obsidian_to_chroma.py  # Vault → ChromaDB 同步脚本
 │   ├── kb_embed.py             # BGE 嵌入模型封装
@@ -95,6 +110,11 @@ obsidian-chromadb-self-evolving-kb/
 │   ├── closed_loop.py          # 闭环编排
 │   ├── closed_loop_config.py   # 闭环配置
 │   └── closed_loop_runtime.py  # 闭环运行时
+│
+├── tests/                      # 测试（pytest）
+│   ├── test_config.py          # 配置模块测试
+│   ├── test_retriever.py       # 检索模块测试
+│   └── test_integration.py     # 集成测试
 │
 ├── examples/
 │   └── vault/                  # 示例知识库（3 篇带 frontmatter 的笔记）
@@ -162,23 +182,55 @@ obsidian-chromadb-self-evolving-kb/
 
 ```bash
 # 同步知识库（增量）
-python src/sync_obsidian_to_chroma.py
+python -m kb_engine.sync_obsidian_to_chroma
 
 # 全量重建索引
-python src/sync_obsidian_to_chroma.py --full
+python -m kb_engine.sync_obsidian_to_chroma --full
 
 # 启动 HTTP API
-python src/kb_api_server.py
+python -m kb_engine.kb_api_server
 
 # 知识库体检
-python src/kb_audit.py
+python -m kb_engine.kb_audit
 
 # 检索效果评估
-python src/eval_retrieval.py
+python -m kb_engine.eval_retrieval
 
 # 启动 API 守护（自动重启）
-python src/kb_api_guard.py
+python -m kb_engine.kb_api_guard
 ```
+
+## 开发指南
+
+### 运行测试
+
+```bash
+# 安装开发依赖
+pip install -e ".[dev]"
+
+# 运行所有测试
+pytest
+
+# 查看覆盖率
+pytest --cov=kb_engine --cov-report=term-missing
+```
+
+### 代码规范
+
+```bash
+# 格式化
+black src/ tests/
+isort src/ tests/
+
+# 检查
+ruff check src/ tests/
+```
+
+更多开发规范请参阅 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## 版本历史
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## MCP 工具清单
 

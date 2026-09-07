@@ -19,9 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import closed_loop_config as C
-import feedback_dataset
-import closed_loop_runtime
+import kb_engine.closed_loop_config as C
+import kb_engine.feedback_dataset as feedback_dataset
+import kb_engine.closed_loop_runtime as closed_loop_runtime
 
 
 def _rate(rows):

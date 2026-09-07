@@ -20,8 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
-from kb_embed import BgeEmbedder
-from sync_obsidian_to_chroma import (
+from kb_engine.kb_embed import BgeEmbedder
+from kb_engine.sync_obsidian_to_chroma import (
     get_vault_files, parse_markdown_to_chunks, bge_doc_text,
     VAULT_PATH, EXCLUDE_DIRS, CHROMA_PATH,
 )

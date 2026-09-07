@@ -14,8 +14,8 @@ from pathlib import Path
 
 import chromadb
 
-import closed_loop_config as C
-from sync_obsidian_to_chroma import CHROMA_PATH, COLLECTION_NAME_BGE
+import kb_engine.closed_loop_config as C
+from kb_engine.sync_obsidian_to_chroma import CHROMA_PATH, COLLECTION_NAME_BGE
 
 
 def load_feedback() -> list:
@@ -132,7 +132,7 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
     """
     if cases is None:
         try:
-            from eval_retrieval import CASES
+            from kb_engine.eval_retrieval import CASES
             cases = CASES
         except Exception:
             return []
@@ -148,7 +148,7 @@ def bootstrap_triples_from_cases(collection_name: str = COLLECTION_NAME_BGE,
     metas = all_docs["metadatas"] or []
 
     if retriever is None:
-        from hybrid_retrieve import HybridRetriever
+        from kb_engine.hybrid_retrieve import HybridRetriever
         retriever = HybridRetriever()
 
     triples = []
@@ -205,12 +205,12 @@ def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
     可克服「小样本 bootstrap 微调≈加噪」导致闸门回滚的问题。
     """
     rng = random.Random(seed)
-    from sync_obsidian_to_chroma import (
+    from kb_engine.sync_obsidian_to_chroma import (
         get_vault_files, parse_markdown_to_chunks, bge_doc_text,
         VAULT_PATH, EXCLUDE_DIRS,
     )
     if retriever is None:
-        from hybrid_retrieve import HybridRetriever
+        from kb_engine.hybrid_retrieve import HybridRetriever
         retriever = HybridRetriever()
 
     files = get_vault_files(VAULT_PATH, EXCLUDE_DIRS)
@@ -259,7 +259,7 @@ def structural_bootstrap_triples(collection_name: str = COLLECTION_NAME_BGE,
 
 def make_training_examples(triples: list):
     """三元组 → sentence_transformers.InputExample 列表（anchor=带前缀的 query，positive=文档）。"""
-    from kb_embed import BGE_QUERY_PREFIX
+    from kb_engine.kb_embed import BGE_QUERY_PREFIX
     from sentence_transformers import InputExample
     examples = []
     for q, pos, _neg in triples:

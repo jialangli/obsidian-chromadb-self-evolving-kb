@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import closed_loop_config as C
+import kb_engine.closed_loop_config as C
 
 
 def evaluate_retriever(retriever, cases: list) -> dict:
@@ -52,7 +52,7 @@ def eval_gate(baseline_rt, candidate_rt, cases: list = None) -> dict:
     Returns: {baseline, candidate, verdict, reasons[], deltas{}}
     """
     if cases is None:
-        from eval_retrieval import CASES
+        from kb_engine.eval_retrieval import CASES
         cases = CASES
 
     base = evaluate_retriever(baseline_rt, cases)
@@ -110,8 +110,8 @@ def eval_gate(baseline_rt, candidate_rt, cases: list = None) -> dict:
 
 
 if __name__ == "__main__":
-    from hybrid_retrieve import HybridRetriever
-    from eval_retrieval import CASES
+    from kb_engine.hybrid_retrieve import HybridRetriever
+    from kb_engine.eval_retrieval import CASES
 
     base_rt = HybridRetriever()  # 基线（当前激活 bge 集合）
     # 把基线自己也当候选跑一遍，验证评测数学（应 verdict 通过、delta≈0）

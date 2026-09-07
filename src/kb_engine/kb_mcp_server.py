@@ -43,7 +43,7 @@ import chromadb
 
 from mcp.server.mcpserver import MCPServer
 
-from sync_obsidian_to_chroma import (
+from kb_engine.sync_obsidian_to_chroma import (
     LsaEmbedder,
     CHROMA_PATH,
     COLLECTION_NAME,
@@ -51,8 +51,8 @@ from sync_obsidian_to_chroma import (
 )
 
 # 自进化闭环：A/B 灰度路由 + 按臂打 model_version 标签
-import closed_loop_runtime
-import closed_loop_config as C
+import kb_engine.closed_loop_runtime as closed_loop_runtime
+import kb_engine.closed_loop_config as C
 
 TRACE_PATH = Path(r"D:\kb-engine\logs\mcp_trace.jsonl")
 FEEDBACK_PATH = Path(r"D:\kb-engine\logs\feedback.jsonl")
@@ -112,7 +112,7 @@ def get_hybrid():
     """懒加载混合检索器；collection/模型更新后由内部 mtime 检测自愈"""
     global _hybrid
     if _hybrid is None:
-        from hybrid_retrieve import HybridRetriever
+        from kb_engine.hybrid_retrieve import HybridRetriever
         _hybrid = HybridRetriever()
     return _hybrid
 

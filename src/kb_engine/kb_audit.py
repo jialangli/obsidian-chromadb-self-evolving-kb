@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import date, datetime
 
 import frontmatter
-from config import settings
+from kb_engine.config import settings
 
 VAULT = Path(settings.vault_path)
 CHROMA_PATH = settings.chroma_path

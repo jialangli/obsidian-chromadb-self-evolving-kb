@@ -52,14 +52,14 @@ def check_deps():
 def build_index():
     """构建示例索引"""
     print("\n🏗  构建向量索引（LSA 模式）...")
-    script_dir = os.path.join(os.path.dirname(__file__), "src")
-    sys.path.insert(0, script_dir)
-    os.chdir(script_dir)  # 切换到 src 目录确保相对路径正确
+    src_dir = os.path.join(os.path.dirname(__file__), "src")
+    sys.path.insert(0, src_dir)
+    os.chdir(os.path.dirname(__file__))  # 切换到项目根目录
 
     try:
-        from sync_obsidian_to_chroma import main as sync_main
+        from kb_engine.sync_obsidian_to_chroma import main as sync_main
         # 模拟命令行参数
-        sys.argv = ["sync_obsidian_to_chroma.py", "--full"]
+        sys.argv = ["kb-sync", "--full"]
         sync_main()
         print("   ✓ 索引构建完成")
         return True
@@ -73,12 +73,13 @@ def build_index():
 def demo_search():
     """演示检索"""
     print("\n🔍 演示混合检索...")
-    script_dir = os.path.join(os.path.dirname(__file__), "src")
-    sys.path.insert(0, script_dir)
-    os.chdir(script_dir)
+    src_dir = os.path.join(os.path.dirname(__file__), "src")
+    if src_dir not in sys.path:
+        sys.path.insert(0, src_dir)
+    os.chdir(os.path.dirname(__file__))
 
     try:
-        from hybrid_retrieve import HybridRetriever
+        from kb_engine.hybrid_retrieve import HybridRetriever
         retriever = HybridRetriever()
 
         queries = [

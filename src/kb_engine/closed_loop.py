@@ -22,14 +22,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import closed_loop_config as C
-import feedback_dataset
-import fine_tune_bge
-import build_candidate_index
-import ab_eval
-import closed_loop_runtime
-from hybrid_retrieve import HybridRetriever
-from kb_embed import BgeEmbedder
+import kb_engine.closed_loop_config as C
+import kb_engine.feedback_dataset as feedback_dataset
+import kb_engine.fine_tune_bge as fine_tune_bge
+import kb_engine.build_candidate_index as build_candidate_index
+import kb_engine.ab_eval as ab_eval
+import kb_engine.closed_loop_runtime as closed_loop_runtime
+from kb_engine.hybrid_retrieve import HybridRetriever
+from kb_engine.kb_embed import BgeEmbedder
 
 
 def _now():

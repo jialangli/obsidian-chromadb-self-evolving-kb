@@ -38,7 +38,7 @@ import chromadb
 import frontmatter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
-from config import settings
+from kb_engine.config import settings
 
 # ── 配置 ──────────────────────────────────────────────
 VAULT_PATH = settings.vault_path
@@ -237,8 +237,8 @@ def bge_doc_text(chunk: dict) -> str:
 def build_bge_collection(all_chunks: list, full_rebuild: bool = False) -> dict:
     """构建/更新 bge 神经语义向量库（独立 collection，失败不影响 LSA 同步）。"""
     try:
-        from kb_embed import BgeEmbedder, available
-from config import settings
+        from kb_engine.kb_embed import BgeEmbedder, available
+from kb_engine.config import settings
         if not available():
             print("[BGE]  模型权重未缓存，跳过 bge 建库（检索将回退 LSA 混合）")
             return {"built": False, "reason": "model-not-cached"}

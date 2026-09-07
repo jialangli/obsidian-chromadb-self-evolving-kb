@@ -7,7 +7,7 @@
 3. 默认值（基于项目相对路径）
 
 用法：
-    from config import settings
+    from kb_engine.config import settings
     print(settings.vault_path)
 """
 import os

@@ -6,7 +6,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
-from hybrid_retrieve import HybridRetriever
+from kb_engine.hybrid_retrieve import HybridRetriever
 
 # (查询, 期望命中的 source_file 子串)
 #

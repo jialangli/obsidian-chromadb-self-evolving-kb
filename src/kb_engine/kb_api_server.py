@@ -35,7 +35,7 @@ from typing import Optional
 
 # 复用同目录下的同步脚本模块
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from sync_obsidian_to_chroma import (
+from kb_engine.sync_obsidian_to_chroma import (
     LsaEmbedder,
     VAULT_PATH,
     CHROMA_PATH,
@@ -44,8 +44,8 @@ from sync_obsidian_to_chroma import (
 )
 
 # 自进化闭环：A/B 灰度路由（与 MCP 服务端共用同一套 decide_variant）
-import closed_loop_runtime
-import closed_loop_config as C
+import kb_engine.closed_loop_runtime as closed_loop_runtime
+import kb_engine.closed_loop_config as C
 
 # ── 全局单例 ──────────────────────────────────────────
 LSA_PATH = VECTORIZER_PATH  # lsa_model.pkl
@@ -95,7 +95,7 @@ def get_hybrid():
     """懒加载混合检索器（LSA 向量 + BM25 含文件名 + RRF 融合）"""
     global _hybrid
     if _hybrid is None:
-        from hybrid_retrieve import HybridRetriever
+        from kb_engine.hybrid_retrieve import HybridRetriever
         _hybrid = HybridRetriever()
     return _hybrid
 

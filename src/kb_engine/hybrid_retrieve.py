@@ -12,7 +12,7 @@ Knowledge 知识库 混合检索模块 (Hybrid Retriever)
 被 kb_mcp_server.py / kb_api_server.py / 评测脚本共用，保证线上与评测同一套逻辑。
 
 用法：
-    from hybrid_retrieve import HybridRetriever
+    from kb_engine.hybrid_retrieve import HybridRetriever
     r = HybridRetriever()                       # 自动加载向量模型 + collection
     hits = r.search("火星救援得分体系", top_k=5)  # 混合检索
     hits = r.search("...", top_k=5, bm25_only=True)  # 仅关键词（做对照）
@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import chromadb
 
-from sync_obsidian_to_chroma import (
+from kb_engine.sync_obsidian_to_chroma import (
     LsaEmbedder,
     tokenize_zh,
     CHROMA_PATH,
@@ -127,7 +127,7 @@ class HybridRetriever:
 
         bge_ok = False
         try:
-            from kb_embed import BgeEmbedder, available as bge_available
+            from kb_engine.kb_embed import BgeEmbedder, available as bge_available
             # 候选/微调模型：外部显式传入，跳过 base 模型探测
             if self._bge_embedder_override is not None:
                 try:

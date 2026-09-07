@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from kb_embed import BGE_QUERY_PREFIX, MODEL_NAME as DEFAULT_BASE_MODEL
+from kb_engine.kb_embed import BGE_QUERY_PREFIX, MODEL_NAME as DEFAULT_BASE_MODEL
 
 
 def train(triples: list, out_dir: str, base_model: str = DEFAULT_BASE_MODEL,
@@ -146,7 +146,7 @@ if __name__ == "__main__":
         with open(args.triples_file, "r", encoding="utf-8") as f:
             triples = json.load(f)
     else:
-        import feedback_dataset as fd
+        import kb_engine.feedback_dataset as fd
         fb = fd.load_feedback()
         triples = fd.build_training_triples(fb) or fd.bootstrap_triples_from_cases()
     train(triples, args.out, base_model=args.base_model, epochs=args.epochs,
