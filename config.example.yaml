@@ -1,0 +1,57 @@
+# ============================================================
+# 知识库引擎配置示例
+# 复制此文件为 config.yaml 并根据实际情况修改
+# ============================================================
+
+# ── 路径 ──────────────────────────────────────────────
+# Obsidian Vault 路径（你的知识源）
+vault_path: "./examples/vault"
+
+# ChromaDB 数据存储目录
+chroma_path: "./data/chroma"
+
+# 日志目录
+log_path: "./data/logs"
+
+# LSA 模型文件路径
+lsa_model_path: "./data/chroma/lsa_model.pkl"
+
+# TF-IDF 向量化器路径
+tfidf_vectorizer_path: "./data/chroma/tfidf_vectorizer.pkl"
+
+# 反馈日志路径
+feedback_log: "./data/logs/feedback.jsonl"
+
+# MCP 调用追踪日志
+trace_log: "./data/logs/mcp_trace.jsonl"
+
+# 当前活跃模型配置文件
+active_model_file: "./data/logs/active_model.json"
+
+# 模型存储目录
+models_dir: "./data/models"
+
+# ── 集合名 ────────────────────────────────────────────
+collection_lsa: "kb_lsa"          # LSA 向量集合（兜底通道）
+collection_bge: "kb_bge"          # BGE 向量集合（主通道）
+collection_bge_candidate: "kb_bge_candidate"  # 微调候选集合（隔离验证）
+
+# ── 模型参数 ──────────────────────────────────────────
+bge_model_name: "BAAI/bge-small-zh-v1.5"
+lsa_dimensions: 384
+bge_dimensions: 512
+
+# ── 检索参数 ──────────────────────────────────────────
+top_k: 10              # 返回结果数量
+rrf_k: 60              # RRF 融合参数
+chunk_size: 1500       # 分块大小（字符）
+chunk_overlap: 200     # 分块重叠（字符）
+
+# ── 服务参数 ──────────────────────────────────────────
+api_host: "127.0.0.1"
+api_port: 8300
+
+# ── 自进化闭环参数 ────────────────────────────────────
+closed_loop_threshold: 8     # 正例数达到阈值触发微调
+dry_run: true                 # 默认演练模式（true=不实际修改线上）
+hit_at_5_threshold: 0.6      # 离线门禁 Hit@5 阈值

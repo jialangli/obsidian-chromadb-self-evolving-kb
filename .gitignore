@@ -17,19 +17,17 @@ venv/
 .venv/
 env/
 
-# ChromaDB data
-chroma_data/
+# Data (generated at runtime)
+data/chroma/
+data/logs/
+data/models/
 *.sqlite3
 *.pkl
-
-# Logs
-logs/
 *.jsonl
 *.log
 
-# Models
-models/
-*.onnx
+# Config (user-specific)
+config.yaml
 
 # Backup
 backup/

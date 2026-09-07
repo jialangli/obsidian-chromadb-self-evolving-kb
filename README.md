@@ -7,29 +7,112 @@
 ## 核心特性
 
 - **五层架构**：数据层（Obsidian Vault）→ 存储层（ChromaDB）→ 检索层（混合检索）→ 服务层（MCP + HTTP 双协议）→ 消费层（Agent 接入）
-- **混合检索**：BGE 语义向量（512d）+ BM25 关键词，通过 RRF 融合排序，兼顾语义泛化与专有名词精确匹配
+- **混合检索**：BGE 语义向量 + BM25 关键词，通过 RRF 融合排序，兼顾语义泛化与专有名词精确匹配
 - **自动降级**：BGE 模型不可用时无缝降级为 LSA 混合检索，服务永不下线
 - **自进化闭环**：从真实使用中收集采纳反馈 → 自动微调嵌入模型 → 离线门禁 + 在线灰度双重验证 → 自动晋升或回滚
 - **双协议出口**：MCP Server（stdio，5 个工具）+ FastAPI（HTTP，4 个端点），Agent 与通用程序都能接入
-- **治理元数据**：六类 frontmatter 分类（fact / preference / experience / safety / task_state / navigation），每条检索结果携带可信度标记
+- **治理元数据**：多分类 frontmatter 治理，每条检索结果携带可信度标记
 
 ## 快速开始
 
-### 在线预览
-
-直接在浏览器中打开 [`index.html`](./index.html) 即可查看完整架构文档（含 Mermaid 流程图、数据表格、演进时间线）。
-
-或访问 GitHub Pages 在线版：https://jialangli.github.io/obsidian-chromadb-self-evolving-kb/
-
-### 本地运行
+### 3 分钟跑通示例
 
 ```bash
+# 1. 克隆项目
 git clone https://github.com/jialangli/obsidian-chromadb-self-evolving-kb.git
 cd obsidian-chromadb-self-evolving-kb
-# 直接用浏览器打开 index.html
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 一键运行快速入门（自动构建示例索引 + 演示检索）
+python quickstart.py
 ```
 
-文档为纯静态页面，无需安装任何依赖。所有字体和脚本均已内置。
+就是这么简单！`quickstart.py` 会用 `examples/vault/` 下的示例笔记构建 LSA 向量索引（无需下载任何模型），然后演示混合检索效果。
+
+### 接入你自己的知识库
+
+```bash
+# 1. 复制配置模板
+cp config.example.yaml config.yaml
+
+# 2. 编辑 config.yaml，将 vault_path 指向你的 Obsidian Vault
+#    vault_path: "/path/to/your/obsidian-vault"
+
+# 3. 全量同步构建索引
+cd src
+python sync_obsidian_to_chroma.py --full
+
+# 4. 启动 HTTP API 服务
+python kb_api_server.py
+# 浏览器打开 http://localhost:8300/docs 查看 API 文档
+```
+
+### 接入 MCP 客户端
+
+在 MCP 客户端的配置文件中添加：
+
+```json
+{
+  "mcpServers": {
+    "kb-engine": {
+      "command": "python",
+      "args": ["-u", "/path/to/src/kb_mcp_server.py"]
+    }
+  }
+}
+```
+
+## 项目结构
+
+```
+obsidian-chromadb-self-evolving-kb/
+├── index.html                  # 架构文档（GitHub Pages 在线预览）
+├── README.md                   # 项目说明（本文件）
+├── LICENSE                     # MIT License
+├── requirements.txt            # Python 依赖
+├── config.example.yaml         # 配置模板
+├── quickstart.py               # 一键快速入门脚本
+├── .gitignore
+│
+├── src/                        # 核心代码
+│   ├── config.py               # 统一配置模块（环境变量 + config.yaml + 默认值）
+│   ├── sync_obsidian_to_chroma.py  # Vault → ChromaDB 同步脚本
+│   ├── kb_embed.py             # BGE 嵌入模型封装
+│   ├── hybrid_retrieve.py      # 混合检索核心（BGE + BM25 → RRF）
+│   ├── kb_api_server.py        # FastAPI HTTP 服务
+│   ├── kb_mcp_server.py        # MCP Server（stdio）
+│   ├── kb_api_guard.py         # API 守护进程（自动重启）
+│   ├── kb_audit.py             # 知识库体检（frontmatter/断链/一致性）
+│   ├── eval_retrieval.py       # 检索效果评估
+│   │
+│   ├── feedback_dataset.py     # 反馈 → 训练三元组
+│   ├── fine_tune_bge.py        # MNRL 对比微调
+│   ├── build_candidate_index.py # 候选隔离集合构建
+│   ├── ab_eval.py              # 离线门禁评估
+│   ├── ab_monitor.py           # 在线灰度监控
+│   ├── closed_loop.py          # 闭环编排
+│   ├── closed_loop_config.py   # 闭环配置
+│   └── closed_loop_runtime.py  # 闭环运行时
+│
+├── examples/
+│   └── vault/                  # 示例知识库（3 篇带 frontmatter 的笔记）
+│       ├── 产品/智能设备产品手册.md
+│       ├── 技术/向量检索原理.md
+│       └── 方法论/知识库治理方法论.md
+│
+├── data/                       # 运行时数据（默认 .gitignore）
+│   ├── chroma/                 # ChromaDB 持久化 + LSA 模型
+│   ├── logs/                   # 调用日志/反馈/审计
+│   └── models/                 # 微调模型
+│
+├── assets/                     # 文档资源
+│   └── charts.js
+└── _shared/                    # 文档字体和脚本
+    ├── fonts/
+    └── js/mermaid.min.js
+```
 
 ## 架构概览
 
@@ -37,7 +120,7 @@ cd obsidian-chromadb-self-evolving-kb
 ⑤ 消费层 · Consumers        MCP 客户端 / TRAE / 任意 HTTP Agent
 ④ 服务层 · Services         MCP Server (stdio, 5 tools) + FastAPI (:8300, 4 endpoints)
 ③ 检索层 · Retrieval        Hybrid Retriever (BGE + BM25 → RRF)
-② 存储层 · Storage           ChromaDB (kb_bge 512d 主通道 / kb_lsa 384d 兜底)
+② 存储层 · Storage           ChromaDB (kb_bge 主通道 / kb_lsa 兜底)
 ① 数据层 · Data              Obsidian Vault (Markdown + frontmatter 治理)
 ```
 
@@ -49,9 +132,9 @@ cd obsidian-chromadb-self-evolving-kb
 
 | 安全机制 | 规则 | 意义 |
 |---------|------|------|
-| 演练默认 | 闭环默认 dry-run，仅 `--apply` 显式触发 | 误操作零风险 |
+| 演练默认 | 闭环默认 dry-run，仅显式触发 apply | 误操作零风险 |
 | 候选隔离 | 微调模型写入独立集合，绝不触碰线上基线 | 实验失败不伤基线 |
-| 双重门禁 | 离线：Hit@5 ≥ 0.6 且无回归；在线：灰度采纳率监控 | 先证明不坏，再谈变好 |
+| 双重门禁 | 离线：Hit@5 ≥ 阈值且无回归；在线：灰度采纳率监控 | 先证明不坏，再谈变好 |
 
 ## 技术栈
 
@@ -60,47 +143,69 @@ cd obsidian-chromadb-self-evolving-kb
 | 知识源 | Obsidian | Markdown + frontmatter，唯一事实源 |
 | 向量库 | ChromaDB | 持久化存储，支持全量重建 |
 | 嵌入模型 | bge-small-zh-v1.5 | 512 维，中文优化 |
-| 兜底嵌入 | LSA (TF-IDF + SVD) | 384 维，完全离线可用 |
-| 检索策略 | BGE + BM25 → RRF | 双通道融合，k=60 |
+| 兜底嵌入 | LSA (TF-IDF + SVD) | 纯离线可用，零模型依赖 |
+| 检索策略 | BGE + BM25 → RRF | 双通道融合 |
 | 服务层 | MCP Server + FastAPI | 双协议出口 |
-| 运行时 | Python 3.13 | 纯本地，零云依赖 |
+| 运行时 | Python 3.9+ | 纯本地，零云依赖 |
 
-## 项目结构
+## 配置说明
 
+配置优先级（从高到低）：
+
+1. **环境变量**：`KB_` 前缀，如 `KB_API_PORT=8300`
+2. **config.yaml**：项目根目录下的配置文件
+3. **默认值**：`src/config.py` 中定义的默认值
+
+所有可配置项见 [config.example.yaml](./config.example.yaml)。
+
+## 常用命令
+
+```bash
+# 同步知识库（增量）
+python src/sync_obsidian_to_chroma.py
+
+# 全量重建索引
+python src/sync_obsidian_to_chroma.py --full
+
+# 启动 HTTP API
+python src/kb_api_server.py
+
+# 知识库体检
+python src/kb_audit.py
+
+# 检索效果评估
+python src/eval_retrieval.py
+
+# 启动 API 守护（自动重启）
+python src/kb_api_guard.py
 ```
-obsidian-chromadb-self-evolving-kb/
-├── index.html              # 架构文档（GitHub Pages 兼容）
-├── README.md               # 项目说明
-├── LICENSE                 # MIT License
-├── assets/
-│   └── charts.js           # 图表脚本
-└── _shared/
-    ├── fonts/              # 内置字体（Outfit, JetBrainsMono 等）
-    └── js/
-        └── mermaid.min.js  # Mermaid 流程图库
-```
 
-## 工程目录参考
+## MCP 工具清单
 
-实际知识库引擎的工程结构（本文档描述的 `kb-engine` 目录）：
+| 工具 | 说明 |
+|------|------|
+| `search_knowledge_base` | 语义检索（自然语言查询） |
+| `filter_knowledge_base` | 元数据过滤（按类型/状态/标签） |
+| `knowledge_base_stats` | 知识库统计概览 |
+| `get_knowledge_entry` | 获取单条笔记全文 |
+| `mark_feedback` | 标记检索结果是否有用（飞轮反馈） |
 
-```
-kb-engine/
-├── venv/                        # Python 虚拟环境
-├── chroma_data/                 # ChromaDB 持久化 + LSA/TF-IDF 模型
-├── scripts/                     # 核心脚本
-│   ├── sync_obsidian_to_chroma.py   # 同步：Vault → 向量库
-│   ├── hybrid_retrieve.py           # 混合检索核心
-│   ├── kb_api_server.py             # FastAPI 服务
-│   ├── kb_mcp_server.py             # MCP Server
-│   ├── feedback_dataset.py          # 反馈 → 训练三元组
-│   ├── fine_tune_bge.py            # MNRL 对比微调
-│   ├── build_candidate_index.py     # 候选隔离集合构建
-│   ├── ab_eval.py / ab_monitor.py   # 离线门禁 / 在线灰度监控
-│   └── closed_loop*.py              # 闭环编排
-├── logs/                        # 调用记录 / 反馈 / 审计日志
-└── backup/                      # 变更前快照
-```
+## API 端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/search` | GET/POST | 混合检索 |
+| `/stats` | GET | 统计概览 |
+| `/feedback` | POST | 提交反馈 |
+
+详细文档见 `http://localhost:8300/docs`（启动后访问）。
+
+## 在线文档
+
+架构全景图和详细设计文档：
+
+📖 https://jialangli.github.io/obsidian-chromadb-self-evolving-kb/
 
 ## License
 
