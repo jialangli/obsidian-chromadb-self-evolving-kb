@@ -192,16 +192,24 @@ class DiskBM25Index:
             conn.executescript(self._SCHEMA)
             cur = conn.cursor()
             cur.execute("BEGIN")
+            # executemany 批量插入（大库关键）：逐行 execute 在数十万行时慢到不可用
+            doc_rows = [(i, len(toks)) for i, toks in enumerate(corpus_tokens)]
+            cur.executemany("INSERT INTO docs(docid, length) VALUES (?, ?)", doc_rows)
+            post_rows = []
             for i, toks in enumerate(corpus_tokens):
-                cur.execute("INSERT INTO docs(docid, length) VALUES (?, ?)", (i, len(toks)))
                 tf = {}
                 for tok in toks:
                     tf[tok] = tf.get(tok, 0) + 1
-                for tok, freq in tf.items():
-                    cur.execute(
-                        "INSERT INTO postings(term, docid, freq) VALUES (?, ?, ?)",
-                        (tok, i, freq),
+                post_rows.extend((tok, i, freq) for tok, freq in tf.items())
+                if len(post_rows) >= 50_000:  # 分批提交，控制缓冲内存
+                    cur.executemany(
+                        "INSERT INTO postings(term, docid, freq) VALUES (?, ?, ?)", post_rows
                     )
+                    post_rows.clear()
+            if post_rows:
+                cur.executemany(
+                    "INSERT INTO postings(term, docid, freq) VALUES (?, ?, ?)", post_rows
+                )
             # term 词频统计：df = 含该 term 的文档数
             cur.execute(
                 "INSERT INTO terms(term, df) " "SELECT term, COUNT(*) FROM postings GROUP BY term"
