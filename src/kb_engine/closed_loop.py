@@ -16,11 +16,7 @@
 """
 
 import argparse
-import sys
 from datetime import datetime
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
 
 import kb_engine.ab_eval as ab_eval
 import kb_engine.build_candidate_index as build_candidate_index

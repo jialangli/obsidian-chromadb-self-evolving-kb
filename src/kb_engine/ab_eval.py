@@ -13,11 +13,6 @@
 未达标 → 编排器执行「自动回滚」（保持基线，不晋升候选）。
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
-
 import kb_engine.closed_loop_config as cfg  # noqa: N812
 
 

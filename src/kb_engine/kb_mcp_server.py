@@ -23,7 +23,7 @@ Knowledge 知识库 MCP Server (Phase 3)
 import hashlib
 import json
 import os
-import sys
+from collections import OrderedDict
 
 # 强制离线（须在 chromadb / huggingface 相关 import 之前）
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -33,9 +33,6 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from datetime import datetime
 from pathlib import Path
-
-# 确保能导入同目录的同步脚本模块
-sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
 
@@ -57,6 +54,7 @@ from kb_engine.sync_obsidian_to_chroma import (
     COLLECTION_NAME,
     VECTORIZER_PATH,
     LsaEmbedder,
+    load_sync_summary,
 )
 
 # 路径统一取自闭环配置（可由 KB_ROOT 环境变量覆盖），不再硬编码本机绝对路径。
@@ -170,10 +168,16 @@ def get_hybrid():
 
 
 def with_retry(fn):
-    """执行一次数据库操作；若因句柄失效抛错，重建连接后重试一次"""
+    """执行一次数据库操作；若因句柄失效抛错，重建连接后重试一次。
+
+    只对「句柄失效」这一可自愈场景重试，第二次仍失败则异常照常上抛（不吞）。
+    设 KB_DEBUG=1 可打印首次失败原因，便于排查非句柄类问题。
+    """
     try:
         return fn()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - 需先感知一切句柄失效
+        if os.environ.get("KB_DEBUG"):
+            print(f"[mcp] 操作失败，重置句柄后重试: {type(e).__name__}: {e}", flush=True)
         reset_state()
         _get_state()
         return fn()
@@ -196,9 +200,19 @@ def _trace(tool: str, args: dict, result_summary: str):
 
 
 # ── 反馈飞轮：result_id 生成 / 结果缓存 / 反馈落盘 ─────
-# 检索时把 result_id -> 详情 存在内存，反馈时用于补全上下文（无需调用方重复传）
-RESULT_CACHE = {}
+# 检索时把 result_id -> 详情 存在内存，反馈时用于补全上下文（无需调用方重复传）。
+# OrderedDict：淘汰用 popitem(last=False)，O(1)；不再 list(keys())[:n] 整表切片。
+RESULT_CACHE: OrderedDict = OrderedDict()
 RESULT_CACHE_MAX = 800
+
+
+def _cache_put(key: str, value: dict) -> None:
+    """写入并移到队尾（LRU 化：刚被覆盖的 key 不先淘汰）"""
+    if key in RESULT_CACHE:
+        del RESULT_CACHE[key]
+    RESULT_CACHE[key] = value
+    while len(RESULT_CACHE) > RESULT_CACHE_MAX:
+        RESULT_CACHE.popitem(last=False)
 
 
 def make_result_id(query: str, chunk_id: str) -> str:
@@ -210,19 +224,18 @@ def make_result_id(query: str, chunk_id: str) -> str:
 def cache_results(query: str, hits: list, model_version: str = ""):
     """缓存本轮检索结果的详情，供反馈时反查（含 model_version 用于 A/B 分臂）"""
     for h in hits:
-        RESULT_CACHE[h["result_id"]] = {
-            "query": query,
-            "source_file": h.get("source_file", ""),
-            "header_path": h.get("header_path", ""),
-            "memory_type": h.get("memory_type", ""),
-            "similarity": h.get("similarity"),
-            "model_version": model_version,
-            "ts": datetime.now().isoformat(timespec="seconds"),
-        }
-    # 简单的容量控制：超出时丢掉最早加入的一批
-    if len(RESULT_CACHE) > RESULT_CACHE_MAX:
-        for k in list(RESULT_CACHE.keys())[: len(RESULT_CACHE) - RESULT_CACHE_MAX]:
-            RESULT_CACHE.pop(k, None)
+        _cache_put(
+            h["result_id"],
+            {
+                "query": query,
+                "source_file": h.get("source_file", ""),
+                "header_path": h.get("header_path", ""),
+                "memory_type": h.get("memory_type", ""),
+                "similarity": h.get("similarity"),
+                "model_version": model_version,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
 
 
 def log_feedback(
@@ -431,12 +444,21 @@ def filter_knowledge_base(
 )
 def knowledge_base_stats() -> str:
     state = _get_state()
-    all_meta = with_retry(lambda: state["collection"].get(include=["metadatas"]))
-    dist = {}
-    for m in all_meta["metadatas"]:
-        t = m.get("memory_type", "unknown")
-        dist[t] = dist.get(t, 0) + 1
-    files = {m.get("source_file", "") for m in all_meta["metadatas"]}
+    total = with_retry(lambda: state["collection"].count())
+
+    # 优先读 sync 落盘的统计摘要（O(1)）；摘要缺失/与库规模不符时兜底全量扫描一次
+    summary = load_sync_summary()
+    if summary and summary.get("total_chunks") == total:
+        dist = summary.get("type_distribution") or {}
+        total_files = summary.get("total_files", 0)
+    else:
+        all_meta = with_retry(lambda: state["collection"].get(include=["metadatas"]))
+        dist = {}
+        for m in all_meta["metadatas"]:
+            t = m.get("memory_type", "unknown")
+            dist[t] = dist.get(t, 0) + 1
+        total_files = len({m.get("source_file", "") for m in all_meta["metadatas"]})
+
     st = cfg.load_active()
     ab = st["ab"]
     ab_status = (
@@ -444,11 +466,11 @@ def knowledge_base_stats() -> str:
         if ab.get("enabled")
         else "未开启灰度"
     )
-    _trace("knowledge_base_stats", {}, f"chunks={len(all_meta['ids'])}")
+    _trace("knowledge_base_stats", {}, f"chunks={total}")
     return json.dumps(
         {
-            "total_chunks": len(all_meta["ids"]),
-            "total_files": len(files),
+            "total_chunks": total,
+            "total_files": total_files,
             "memory_type_distribution": dist,
             "embedding": (
                 f"bge 激活集合={st['active_bge_collection']}"

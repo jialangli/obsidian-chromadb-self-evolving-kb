@@ -206,6 +206,8 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
                             **file_meta,
                             "header_path": header_path,
                             "chunk_index": len(chunks),
+                            # 全文指纹：供 bge 通道增量同步判断「内容是否变更」
+                            "content_hash": hashlib.sha256(doc_text.encode("utf-8")).hexdigest(),
                         },
                     }
                 )
@@ -226,14 +228,16 @@ def parse_markdown_to_chunks(filepath: str, vault_root: str) -> list:
 
     if not chunks and content.strip():
         chunk_id = hashlib.md5((rel_path + "|full").encode()).hexdigest()
+        doc_text = f"[{file_meta['memory_type']}] {filename}\n{content.strip()}"
         chunks.append(
             {
                 "id": chunk_id,
-                "text": f"[{file_meta['memory_type']}] {filename}\n{content.strip()}",
+                "text": doc_text,
                 "metadata": {
                     **file_meta,
                     "header_path": filename,
                     "chunk_index": 0,
+                    "content_hash": hashlib.sha256(doc_text.encode("utf-8")).hexdigest(),
                 },
             }
         )
@@ -250,18 +254,15 @@ def bge_doc_text(chunk: dict) -> str:
 
 
 def build_bge_collection(all_chunks: list, full_rebuild: bool = False) -> dict:
-    """构建/更新 bge 神经语义向量库（独立 collection，失败不影响 LSA 同步）。"""
+    """构建/更新 bge 神经语义向量库（独立 collection，失败不影响 LSA 同步）。
+
+    非全量时做**内容哈希增量**：对比库内已存 content_hash，只编码新增/变更的块，
+    并删除库中已消失的块 —— 未变更的块完全跳过（模型都不用加载，秒级完成）。
+    旧库（元数据没有 content_hash）会退化为一次性全量重建。
+    """
     try:
         from kb_engine.kb_embed import BgeEmbedder, available
 
-        if not available():
-            print("[BGE]  模型权重未缓存，跳过 bge 建库（检索将回退 LSA 混合）")
-            return {"built": False, "reason": "model-not-cached"}
-        print("[BGE]  加载 bge-small-zh-v1.5 ...")
-        emb = BgeEmbedder()
-        texts = [bge_doc_text(c) for c in all_chunks]
-        print(f"[BGE]  编码 {len(texts)} 个增强文本块 ...")
-        vecs = emb.encode_docs(texts, batch_size=64)
         client = chromadb.PersistentClient(path=CHROMA_PATH)
         if full_rebuild:
             try:
@@ -270,25 +271,85 @@ def build_bge_collection(all_chunks: list, full_rebuild: bool = False) -> dict:
                 pass
         col = client.get_or_create_collection(
             name=COLLECTION_NAME_BGE,
-            metadata={
-                "description": "Knowledge 知识库 - bge-small-zh-v1.5 神经语义向量库",
-                "embedding_model": "BAAI/bge-small-zh-v1.5",
-                "dim": int(vecs.shape[1]),
-            },
+            metadata={"description": "Knowledge 知识库 - bge-small-zh-v1.5 神经语义向量库"},
             embedding_function=None,
         )
+
+        # 目标集合
         ids = [c["id"] for c in all_chunks]
-        metas = [c["metadata"] for c in all_chunks]
-        batch_size = 500  # noqa: N806
-        for i in range(0, len(ids), batch_size):
-            b = slice(i, i + batch_size)
-            try:
-                col.delete(ids=ids[b])
-            except Exception:
-                pass
-            col.add(ids=ids[b], documents=texts[b], metadatas=metas[b], embeddings=vecs[b].tolist())
-        print(f"[BGE]  bge 库完成：{col.count()} 块，维度 {vecs.shape[1]}")
-        return {"built": True, "dim": int(vecs.shape[1]), "count": col.count()}
+        new_hashes = {c["id"]: (c["metadata"].get("content_hash") or "") for c in all_chunks}
+        # 库内现状（id -> 已存 content_hash）
+        old = col.get(include=["metadatas"], limit=max(col.count(), 1))
+        old_hashes = (
+            {
+                cid: (m or {}).get("content_hash", "") or ""
+                for cid, m in zip(old["ids"], old["metadatas"] or [])
+            }
+            if old["ids"]
+            else {}
+        )
+
+        if not full_rebuild:
+            to_add = [
+                c
+                for c in all_chunks
+                if c["id"] not in old_hashes or new_hashes[c["id"]] != old_hashes.get(c["id"])
+            ]
+            to_del = [cid for cid in old_hashes if cid not in new_hashes]
+        else:
+            to_add = list(all_chunks)
+            to_del = list(old_hashes)
+        removed = len(to_del)
+        changed = len(to_add)
+
+        if not changed and not to_del:
+            print(f"[BGE]  无变更块，跳过（{len(ids)} 块已是最新）")
+            return {
+                "built": True,
+                "changed": 0,
+                "removed": 0,
+                "count": col.count(),
+                "skipped": True,
+            }
+
+        if not available():
+            print("[BGE]  模型权重未缓存，跳过 bge 建库（检索将回退 LSA 混合）")
+            return {"built": False, "reason": "model-not-cached"}
+
+        print("[BGE]  加载 bge-small-zh-v1.5 ...")
+        emb = BgeEmbedder()
+        # 只编码有变更的块
+        add_texts = [bge_doc_text(c) for c in to_add]
+        print(
+            f"[BGE]  编码 {len(add_texts)} 个变更文本块（跳过未变更 {len(ids) - len(to_add)} 个）..."
+        )
+        add_vecs = emb.encode_docs(add_texts, batch_size=64) if add_texts else None
+
+        if to_del:
+            for i in range(0, len(to_del), 500):
+                col.delete(ids=to_del[i : i + 500])
+        if to_add:
+            add_metas = [c["metadata"] for c in to_add]
+            for i in range(0, len(to_add), 500):
+                s = slice(i, i + 500)
+                # 必须用 upsert：chroma 的 add() 对已存在 id 会「静默忽略」整条更新
+                # （文档/元数据都不动），增量补写会永远不生效
+                col.upsert(
+                    ids=[c["id"] for c in to_add[s]],
+                    documents=add_texts[s],
+                    metadatas=add_metas[s],
+                    embeddings=add_vecs[s],  # float32 ndarray 直传
+                )
+        print(
+            f"[BGE]  bge 库完成：{col.count()} 块，维度 {add_vecs.shape[1] if add_vecs is not None else '?'}（变更 {changed}，删除 {removed}）"
+        )
+        return {
+            "built": True,
+            "changed": changed,
+            "removed": removed,
+            "dim": int(add_vecs.shape[1]) if add_vecs is not None else None,
+            "count": col.count(),
+        }
     except Exception as e:
         print(f"[BGE]  bge 建库失败（已忽略，检索回退 LSA）：{e}")
         return {"built": False, "reason": str(e)}
@@ -303,7 +364,8 @@ def sync(full_rebuild: bool = False):
     print(f"  ChromaDB:    {CHROMA_PATH}")
     print(f"  Collection:  {COLLECTION_NAME}")
     print("  Embedding:   LSA（TF-IDF + SVD，离线）")
-    print(f"  Mode:        {'全量重建' if full_rebuild else '增量同步'}")
+    mode_line = "全量重建" if full_rebuild else "增量同步（bge 按内容哈希增量；LSA 需全局重训）"
+    print(f"  Mode:        {mode_line}")
     print(f"{'='*60}")
 
     # 1. 收集全部 chunk
@@ -353,15 +415,15 @@ def sync(full_rebuild: bool = False):
     ids = [c["id"] for c in all_chunks]
     texts = [c["text"] for c in all_chunks]
     metadatas = [c["metadata"] for c in all_chunks]
-    emb_list = embeddings.tolist()
 
-    # 分批写入（避免单次过大）
+    # 分批写入（避免单次过大）。embeddings 直接传 float32 ndarray 切片，
+    # 省去 .tolist() 到 Python float64 列表的整库转换（对 10 万级 chunk 是实打实的耗时+内存）
     batch_size = 500  # noqa: N806
     for i in range(0, len(ids), batch_size):
         batch_ids = ids[i : i + batch_size]
         batch_texts = texts[i : i + batch_size]
         batch_meta = metadatas[i : i + batch_size]
-        batch_emb = emb_list[i : i + batch_size]
+        batch_emb = embeddings[i : i + batch_size]
         try:
             collection.delete(ids=batch_ids)  # 幂等：先删后加
         except Exception:
@@ -377,11 +439,18 @@ def sync(full_rebuild: bool = False):
     # 4.5 构建 bge 神经语义向量库（独立 collection，失败不影响上面的 LSA 结果）
     bge_info = build_bge_collection(all_chunks, full_rebuild)
 
-    # 5. 记录同步日志
+    # 5. 记录同步日志（含统计摘要，供 /stats、knowledge_base_stats O(1) 读取，免全量扫描）
+    from collections import Counter
+
+    type_dist = Counter((c["metadata"].get("memory_type") or "unknown") for c in all_chunks)
+    file_set = {c["metadata"].get("source_file", "") for c in all_chunks}
     sync_record = {
-        "last_full_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "last_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "files": len(md_files),
         "chunks": len(all_chunks),
+        "total_chunks": len(all_chunks),
+        "total_files": len(file_set),
+        "type_distribution": dict(type_dist),
         "vocab_size": embedder.vocab_size,
         "embedding_dim": EMBEDDING_DIM,
         "embedding_method": (
@@ -404,6 +473,19 @@ def sync(full_rebuild: bool = False):
     print(f"{'='*60}")
 
     return sync_record
+
+
+def load_sync_summary() -> dict | None:
+    """读取最近一次同步写入的统计摘要（/stats、knowledge_base_stats 免全量扫描用）。
+
+    Returns:
+        摘要 dict（total_chunks/total_files/type_distribution/last_sync...）；无文件或损坏返回 None。
+    """
+    try:
+        with open(LOG_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def main(argv: list = None):

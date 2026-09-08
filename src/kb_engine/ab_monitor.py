@@ -13,10 +13,6 @@ A/B 在线监控与自动晋升/回滚（自进化闭环第⑤步·线上）
 """
 
 import argparse
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
 
 import kb_engine.closed_loop_config as cfg  # noqa: N812
 import kb_engine.closed_loop_runtime as closed_loop_runtime

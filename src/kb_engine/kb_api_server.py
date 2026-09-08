@@ -15,8 +15,12 @@ Knowledge 知识库 - 语义检索 HTTP API 服务
 """
 
 import argparse
+import json
 import os
+import subprocess
 import sys
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -29,12 +33,9 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import chromadb
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
-# 复用同目录下的同步脚本模块
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # 自进化闭环：A/B 灰度路由（与 MCP 服务端共用同一套 decide_variant）
 import kb_engine.closed_loop_runtime as closed_loop_runtime
@@ -42,18 +43,30 @@ from kb_engine.config import settings
 from kb_engine.sync_obsidian_to_chroma import (
     CHROMA_PATH,
     COLLECTION_NAME,
+    LOG_PATH,
     VAULT_PATH,
     VECTORIZER_PATH,
     LsaEmbedder,
+    load_sync_summary,
 )
 
 # ── 全局单例 ──────────────────────────────────────────
 LSA_PATH = VECTORIZER_PATH  # lsa_model.pkl
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动预热：后台线程做轻量预载（LSA + collection，秒级），不阻塞启动；
+    重型 hub 由首次 /search 惰性构建（与预热无并发，见 _warmup docstring）。"""
+    threading.Thread(target=_warmup, daemon=True).start()
+    yield
+
+
 app = FastAPI(
     title="Knowledge 知识库语义检索 API",
     description="基于 LSA（TF-IDF + SVD）+ ChromaDB 的本地知识库检索服务",
-    version="2.0.0",
+    version="2.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -65,49 +78,61 @@ app.add_middleware(
 )
 
 _embedder = None
+_embedder_lock = threading.Lock()
 _collection = None
+_collection_lock = threading.Lock()
+# 后台同步状态：POST /sync 立即返回，GET /sync/status 轮询
+_sync_state = {"running": False, "last": None, "started_at": None}
 
 
 def get_embedder() -> LsaEmbedder:
     global _embedder
     if _embedder is None:
-        if not os.path.exists(LSA_PATH):
-            raise HTTPException(
-                status_code=503,
-                detail=f"LSA 模型未找到（{LSA_PATH}），请先运行 sync_obsidian_to_chroma.py",
-            )
-        _embedder = LsaEmbedder.load(LSA_PATH)
+        with _embedder_lock:
+            if _embedder is None:
+                if not os.path.exists(LSA_PATH):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"LSA 模型未找到（{LSA_PATH}），请先运行 sync_obsidian_to_chroma.py",
+                    )
+                _embedder = LsaEmbedder.load(LSA_PATH)
     return _embedder
 
 
 def get_collection():
     global _collection
     if _collection is None:
-        client = chromadb.PersistentClient(path=CHROMA_PATH)
-        try:
-            _collection = client.get_collection(COLLECTION_NAME)
-        except Exception:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"知识库集合 '{COLLECTION_NAME}' 不存在，"
-                    "请先运行 `kb sync --full` 构建索引。"
-                ),
-            )
+        # 锁串行化首次创建：chromadb 的 SharedSystemClient 非线程安全，
+        # 「预热线程 + 首个请求」并发建客户端会 KeyError（已实测复现）
+        with _collection_lock:
+            if _collection is None:
+                client = chromadb.PersistentClient(path=CHROMA_PATH)
+                try:
+                    _collection = client.get_collection(COLLECTION_NAME)
+                except Exception:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            f"知识库集合 '{COLLECTION_NAME}' 不存在，"
+                            "请先运行 `kb sync --full` 构建索引。"
+                        ),
+                    )
     return _collection
 
 
-_hybrid = None
+def _warmup():
+    """启动后台预热（轻量、不碰 torch）：预载 LSA 模型 + Chroma collection，秒级完成，
+    使 /health、/stats、/filter 及 LSA 回退路径即时可用。
 
-
-def get_hybrid():
-    """懒加载混合检索器（LSA 向量 + BM25 含文件名 + RRF 融合）"""
-    global _hybrid
-    if _hybrid is None:
-        from kb_engine.hybrid_retrieve import HybridRetriever
-
-        _hybrid = HybridRetriever()
-    return _hybrid
+    重型部分（BGE/reranker 构成的 A/B 检索器 hub）刻意**不在启动时预热**：
+    加载耗时可达 ~90s，若与首个 /search 并发建 hub 会双重加载甚至崩溃；
+    由首次 /search 经 closed_loop_runtime 惰性构建一次，之后全部走缓存（_HUBS）。
+    """
+    try:
+        get_embedder()
+        get_collection()
+    except Exception:
+        pass
 
 
 # ── 请求/响应模型 ─────────────────────────────────────
@@ -135,8 +160,15 @@ class SyncRequest(BaseModel):
 # ── 端点 ──────────────────────────────────────────────
 @app.get("/health")
 def health_check():
-    """健康检查端点（用于 Docker healthcheck 和负载均衡）"""
-    return {"status": "ok", "service": "kb-engine"}
+    """健康检查端点：真实探活 —— collection 缺失抛 503（Docker healthcheck 会判失败），
+    并顺带返回库规模；不做模型加载，保持毫秒级。"""
+    coll = get_collection()  # 集合不存在时抛 503
+    return {
+        "status": "ok",
+        "service": "kb-engine",
+        "chunks": coll.count(),
+        "lsa_model": os.path.exists(LSA_PATH),
+    }
 
 
 @app.get("/")
@@ -148,10 +180,12 @@ def root():
         "vector_store": f"ChromaDB @ {CHROMA_PATH}",
         "vault": VAULT_PATH,
         "endpoints": {
+            "GET /health": "健康检查（探活 ChromaDB）",
             "GET /stats": "知识库统计",
             "POST /search": "语义检索",
             "POST /filter": "元数据过滤",
-            "POST /sync": "触发同步",
+            "POST /sync": "触发同步（后台执行）",
+            "GET /sync/status": "查询同步状态",
         },
     }
 
@@ -161,18 +195,40 @@ def stats():
     coll = get_collection()
     total = coll.count()
 
-    # 按类型统计
-    all_meta = coll.get(include=["metadatas"])
-    type_dist = {}
-    file_set = set()
-    for m in all_meta["metadatas"]:
-        t = m.get("memory_type", "unknown")
-        type_dist[t] = type_dist.get(t, 0) + 1
-        file_set.add(m.get("source_file", ""))
+    # 优先读 sync 时落盘的统计摘要（O(1)）；摘要缺失或与库规模不一致时兜底全量扫描一次并回写
+    summary = load_sync_summary()
+    if summary and summary.get("total_chunks") == total:
+        type_dist = summary.get("type_distribution") or {}
+        total_files = summary.get("total_files", 0)
+    else:
+        all_meta = coll.get(include=["metadatas"])
+        type_dist = {}
+        file_set = set()
+        for m in all_meta["metadatas"]:
+            t = m.get("memory_type", "unknown")
+            type_dist[t] = type_dist.get(t, 0) + 1
+            file_set.add(m.get("source_file", ""))
+        total_files = len(file_set)
+        try:  # 回写摘要，下次 O(1)
+            Path(LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+            with open(LOG_PATH, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "total_chunks": total,
+                        "total_files": total_files,
+                        "type_distribution": type_dist,
+                        "last_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        except OSError:
+            pass
 
     return {
         "total_chunks": total,
-        "total_files": len(file_set),
+        "total_files": total_files,
         "memory_type_distribution": type_dist,
         "last_sync": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "embedding": (
@@ -324,39 +380,54 @@ def filter_docs(req: FilterRequest):
     }
 
 
-@app.post("/sync")
-def trigger_sync(req: SyncRequest):
-    """触发同步（在子进程中运行，避免阻塞 API）"""
-    import subprocess
-
-    # 用当前解释器执行，不要用写死的 venv/Scripts/python.exe（macOS/Linux/Docker 上不存在）
-    cmd = [sys.executable, "-m", "kb_engine.sync_obsidian_to_chroma"]
-    if req.full:
-        cmd.append("--full")
-
+def _run_sync_bg(full: bool):
+    """在后台线程执行同步子进程；结束后失效全部缓存（LSA 重训过，向量/BM25 全过期）。"""
+    global _sync_state, _embedder, _collection
     try:
+        cmd = [sys.executable, "-m", "kb_engine.sync_obsidian_to_chroma"]
+        if full:
+            cmd.append("--full")
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=900,  # 大 vault + bge 编码可能较久
             cwd=str(Path(__file__).resolve().parents[2]),
         )
-        # 同步后重置缓存：LSA 模型重训过，检索器里的向量与 BM25 索引也全部失效。
-        # 三个缓存都要清，漏掉任何一个都会继续用旧索引直到重启。
-        global _embedder, _collection, _hybrid
-        _embedder = None
-        _collection = None
-        _hybrid = None
-        closed_loop_runtime.reset_hubs()
-        return {
-            "success": result.returncode == 0,
+        ok = result.returncode == 0
+        if ok:
+            _embedder = None
+            _collection = None
+            closed_loop_runtime.reset_hubs()
+        _sync_state["last"] = {
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "success": ok,
             "command": " ".join(cmd),
-            "stdout_tail": result.stdout[-2000:] if result.stdout else "",
-            "stderr_tail": result.stderr[-500:] if result.stderr else "",
+            "stdout_tail": (result.stdout or "")[-2000:],
+            "stderr_tail": (result.stderr or "")[-500:],
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"同步失败: {e}")
+    except Exception as e:  # noqa: BLE001 - 后台任务需兜住一切异常写状态
+        _sync_state["last"] = {"success": False, "error": str(e)}
+    finally:
+        _sync_state["running"] = False
+        _sync_state["started_at"] = None
+
+
+@app.post("/sync")
+def trigger_sync(req: SyncRequest, background_tasks: BackgroundTasks):
+    """触发同步：立即返回（后台执行，不阻塞请求线程；结果可经 GET /sync/status 轮询）"""
+    if _sync_state["running"]:
+        return {"success": False, "error": "已有同步任务进行中", "running": True}
+    _sync_state["running"] = True
+    _sync_state["started_at"] = datetime.now().isoformat(timespec="seconds")
+    background_tasks.add_task(_run_sync_bg, req.full)
+    return {"success": True, "started": True, "full": req.full, "status_endpoint": "/sync/status"}
+
+
+@app.get("/sync/status")
+def sync_status():
+    """查询后台同步任务状态（running / last 结果）"""
+    return _sync_state
 
 
 def main(argv: list = None):

@@ -15,10 +15,6 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import argparse
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
 
 import chromadb
 

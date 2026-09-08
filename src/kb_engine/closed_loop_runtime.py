@@ -11,6 +11,7 @@
 """
 
 import random
+import threading
 
 import kb_engine.closed_loop_config as cfg  # noqa: N812
 from kb_engine.hybrid_retrieve import HybridRetriever
@@ -18,6 +19,8 @@ from kb_engine.kb_embed import BgeEmbedder
 
 # bge 集合名 → 检索器实例 的缓存
 _HUBS = {}
+# 构建锁：检索器加载 BGE/reranker 较重，「预热线程 + 首个请求」并发建会双重加载甚至崩溃
+_HUBS_LOCK = threading.Lock()
 
 
 def _make_retriever(bge_collection_name: str, bge_model_path: str = None) -> HybridRetriever:
@@ -35,9 +38,12 @@ def get_baseline_retriever() -> HybridRetriever:
     st = cfg.load_active()
     key = st["active_bge_collection"]
     if key not in _HUBS:
-        _HUBS[key] = _make_retriever(
-            key, st["active_bge_model"] if _is_custom(st["active_bge_model"]) else None
-        )
+        with _HUBS_LOCK:
+            if key not in _HUBS:
+                _HUBS[key] = _make_retriever(
+                    key,
+                    st["active_bge_model"] if _is_custom(st["active_bge_model"]) else None,
+                )
     return _HUBS[key]
 
 
@@ -49,7 +55,9 @@ def get_candidate_retriever() -> HybridRetriever:
         return None
     key = ab["candidate_collection"]
     if key not in _HUBS:
-        _HUBS[key] = _make_retriever(key, ab.get("candidate_model"))
+        with _HUBS_LOCK:
+            if key not in _HUBS:
+                _HUBS[key] = _make_retriever(key, ab.get("candidate_model"))
     return _HUBS[key]
 
 

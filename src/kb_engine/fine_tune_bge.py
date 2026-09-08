@@ -24,10 +24,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 import argparse
 import json
 import random
-import sys
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent))
 
 from kb_engine.kb_embed import BGE_QUERY_PREFIX
 from kb_engine.kb_embed import MODEL_NAME as DEFAULT_BASE_MODEL
