@@ -37,6 +37,13 @@ pip install -e ".[dev]"
 #   pip install -e ".[bge]"      # 会装 sentence-transformers（连带 torch，体积较大）
 #   未装时自动降级为 LSA / 纯 RRF，功能完整可用。
 
+# ⚠️ 国内网络必看：BGE 模型权重是从 HuggingFace 下载的（首次 sync/检索时），
+#    直连官方 CDN 常常卡死或失败。先设置国内镜像再运行即可：
+#      Linux/macOS:          export HF_ENDPOINT=https://hf-mirror.com
+#      Windows (PowerShell): $env:HF_ENDPOINT = "https://hf-mirror.com"
+#      Windows (cmd):        set HF_ENDPOINT=https://hf-mirror.com
+#    设完后，模型会自动从 hf-mirror.com 拉取（权重缓存在本地，只下一次）。
+
 # 3. 一键运行快速入门（自动构建示例索引 + 演示检索）
 python quickstart.py
 ```
@@ -253,14 +260,28 @@ kb api --port 8300
 # 知识库体检
 kb audit
 
-# 检索效果评估
+# 检索效果评估（内置评估集：示例库的 12 条人工 gold）
 kb eval
+
+# 评估你自己的库（无人工标注也能测）：
+#   --self N  从当前索引自动取样 N 条自评用例并评测（query=块正文首句，gold=块所在文件）
+#             结果同时写入 data/logs/eval_cases_self.json，可人工检查后复用
+kb eval --self 20
+
+#   --cases f.json  用你手工标注的外部评估集评测（JSON 数组：[{"query": "...", "gold": "子串"}]
+#                   其中 gold 是期望命中的 source_file 子串，写法见 data/logs/eval_cases_self.json）
+kb eval --cases /path/to/my_cases.json
+
+# 只检查评估集 gold 在你的库中是否可达（防止死用例压低指标）
+kb eval --audit-cases
 
 # 查看统计
 kb stats
 ```
 
 > 也可以用 `python -m kb_engine.xxx` 方式调用，效果相同。
+> `--self` 是"拿库自己的措辞找原文"的自省式评估，用来暴露分块/向量化问题；
+> 若想反映真实用户问法，请基于实际查询积累人工 gold（写进 `--cases` 文件后即可纳入评估与 CI 闸门思路）。
 
 ## 开发指南
 

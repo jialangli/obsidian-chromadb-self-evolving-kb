@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -121,18 +122,33 @@ def get_collection():
 
 
 def _warmup():
-    """启动后台预热（轻量、不碰 torch）：预载 LSA 模型 + Chroma collection，秒级完成，
-    使 /health、/stats、/filter 及 LSA 回退路径即时可用。
+    """启动后台预热，两层：
+    1) 轻量（秒级）：预载 LSA 模型 + Chroma collection → /health /stats /filter 即时可用；
+    2) 重型（约 30~120s）：预建 A/B 检索器 hub（BGE/reranker）→ 用户首查不再现场干等。
 
-    重型部分（BGE/reranker 构成的 A/B 检索器 hub）刻意**不在启动时预热**：
-    加载耗时可达 ~90s，若与首个 /search 并发建 hub 会双重加载甚至崩溃；
-    由首次 /search 经 closed_loop_runtime 惰性构建一次，之后全部走缓存（_HUBS）。
+    hub 构建与 /search 共用 closed_loop_runtime 的 _HUBS_LOCK（双检锁，已验证并发安全：
+    预热与首查并发只构建一次，另一方阻塞后复用缓存）。任一步失败都不影响服务。
     """
     try:
         get_embedder()
         get_collection()
     except Exception:
-        pass
+        return
+    print(
+        "[warm] 预建 A/B 检索器（BGE/reranker 首次加载约 30~120s，期间 /search 会等待就绪）...",
+        flush=True,
+    )
+    t0 = time.time()
+    try:
+        closed_loop_runtime.warm_up_hubs()
+        print(
+            f"[warm] 检索器就绪，耗时 {time.time() - t0:.0f}s（/health 的 hub_ready=true）",
+            flush=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(
+            f"[warm] 预建失败（将退化为首次 /search 惰性构建）：{type(e).__name__}: {e}", flush=True
+        )
 
 
 # ── 请求/响应模型 ─────────────────────────────────────
@@ -161,13 +177,14 @@ class SyncRequest(BaseModel):
 @app.get("/health")
 def health_check():
     """健康检查端点：真实探活 —— collection 缺失抛 503（Docker healthcheck 会判失败），
-    并顺带返回库规模；不做模型加载，保持毫秒级。"""
+    并顺带返回库规模与检索器就绪状态；不做模型加载，保持毫秒级。"""
     coll = get_collection()  # 集合不存在时抛 503
     return {
         "status": "ok",
         "service": "kb-engine",
         "chunks": coll.count(),
         "lsa_model": os.path.exists(LSA_PATH),
+        "hub_ready": closed_loop_runtime.hubs_ready(),  # 首查就绪后可轮询该字段
     }
 
 
@@ -175,7 +192,7 @@ def health_check():
 def root():
     return {
         "service": "Knowledge 知识库语义检索 API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "embedding": "bge-small-zh-v1.5(512d) 优先，LSA(384d) 回退",
         "vector_store": f"ChromaDB @ {CHROMA_PATH}",
         "vault": VAULT_PATH,

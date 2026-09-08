@@ -82,6 +82,24 @@ def decide_variant() -> tuple:
     return "baseline", st["active_bge_collection"], get_baseline_retriever()
 
 
+def warm_up_hubs() -> None:
+    """启动预热：预构建 A/B 检索器（baseline，灰度开启时含候选）。
+
+    与请求线程共用 _HUBS_LOCK（双检锁）：预热与首个请求并发时只会构建一次，
+    另一方阻塞等待后直接复用缓存——不会出现两份 BGE/reranker 同时加载。
+    """
+    get_baseline_retriever()
+    st = cfg.load_active()
+    ab = st.get("ab") or {}
+    if ab.get("enabled") and ab.get("candidate_collection"):
+        get_candidate_retriever()
+
+
+def hubs_ready() -> bool:
+    """A/B 检索器 hub 是否已构建（供 /health 探活 / 客户端轮询首查就绪）"""
+    return bool(_HUBS)
+
+
 def reset_hubs():
     """清空缓存（active_model.json 变更后调用，使下次请求重建检索器）。"""
     _HUBS.clear()

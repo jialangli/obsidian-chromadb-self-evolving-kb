@@ -5,6 +5,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **自我评估集**：`kb eval --self N` 从当前索引自动取样生成自评用例并评测（无标注库也能量化检索质量），产物写 `data/logs/eval_cases_self.json`
+- **外部评估集**：`kb eval --cases file.json` 用你自己的手工标注 gold 评测
+- **首查预热**：API 启动即后台预建 A/B 检索器（BGE/reranker），`/health` 暴露 `hub_ready` 可轮询，首个 /search 不再现场干等
+- README：国内网络 HF 镜像（`HF_ENDPOINT=hf-mirror.com`）指引
+
 ## [0.2.0] - 2026-09-08
 
 ### Added
