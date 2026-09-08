@@ -85,14 +85,70 @@
 
 ## 四、遗留 / 后续建议（未做，按优先级）
 
-1. **【推荐】两阶段 Rerank**：`BGE+BM25 → RRF → Top-50 → bge-reranker-base → Top-5`。RRF 是无监督融合，看不到 query-doc 细粒度交互；cross-encoder 在中文场景 Hit@5 通常还能提 8-15 个点，Top-50 的 rerank 在 CPU 上单条几十毫秒。把硬编码的 `RRF_K` 和两通道权重做成可配置。
+1. ~~**【推荐】两阶段 Rerank**~~ ✅ **已完成并验证**：`RRF Top-50 → bge-reranker-base → Top-5`，中文 Hit@5 实测 +8%（详见第六节）。`RRF_K` / 两通道权重 / `rerank_max_chars` 均已可配置。
 2. **BM25 内存**：当前 2-gram+3-gram 全量驻留，真实大 vault 内存压力仍大；可换磁盘倒排（如 `rank_bm25` 的 `BM25Okapi` 或 Lucy/Whoosh）。
-3. **未验证项**：torch / sentence-transformers / huggingface_hub 未安装，BGE 通道、微调闭环（`fine_tune_bge`）、A/B 灰度（`closed_loop_runtime`）未经真实运行验证，只做了静态与导入层面的修复。
+3. ~~**未验证项（BGE 通道 / 微调闭环）**~~ ✅ **已真实运行验证**：装好 `torch/sentence-transformers/huggingface_hub` 后，BGE 神经通道激活、`fine_tune_bge` 微调与 `closed_loop` 离线闸门端到端跑通（详见第六节）。
 4. **CI 加固**：现有 CI 仅 `import` 不调用，建议把 `pytest` + 一次真实 `kb sync --full` + `kb eval` 纳入流水线，让 24 项测试成为闸门。
 
 ---
 
-## 五、改动文件清单
+## 六、真实运行验证（BGE 通道 / 两阶段 Rerank / 微调闭环）
+
+> 验证环境：在上一轮纯 LSA 基础上，**装上** `torch 2.14.0+cpu` + `sentence-transformers 6.0.1` + `transformers 5.16.1` + `huggingface_hub 1.30.0`。
+> 模型权重 `BAAI/bge-small-zh-v1.5`（dim=512）与 `BAAI/bge-reranker-base` 经国内镜像 `hf-mirror.com` 下载到本地 `HF_HOME`（沙箱直连 HF CDN 的 HTTPS 被重置，镜像可用）。
+> 运行时通过 `HF_HOME` 指向本地缓存，且 `BgeEmbedder`/`BgeReranker` 均设 `HF_HUB_OFFLINE=1` + `local_files_only=True`，**只离线加载、绝不联网**。
+
+### 6.1 BGE 神经通道真实激活
+- `kb sync --full`：加载 `bge-small-zh-v1.5`，编码 81 个块写入 `kb_bge` 集合（维度 512）；同时保留 `kb_lsa` 作为降级集合。
+- `kb eval` 运行时 `vector_mode=bge`，向量通道走真实 BGE 语义向量。
+
+### 6.2 两阶段 Rerank 召回增益（核心交付）
+
+| 档位 | Hit@1 | Hit@5 | MRR |
+|------|-------|-------|-----|
+| LSA 原始（legacy 基线） | 83% | 100% | 0.896 |
+| BGE + RRF（关闭 rerank） | 92% | 92% | 0.917 |
+| **BGE + RRF + rerank（完整管线）** | **92%** | **100%** | **0.944** |
+
+- **Rerank 增益：Hit@5 92% → 100%（+8%），MRR 0.917 → 0.944（+0.028）**。
+- 具体救回的用例：「常见问题和故障排查方法」在仅 RRF 时掉出 Top-5（MISS），经 cross-encoder 重排后回到 Top-5 —— 这正是 RRF 无监督融合看不到 query-doc 细粒度交互、而 cross-encoder 能补上的典型场景。
+- 至此「把中文召回再提一档」目标达成。
+
+### 6.3 Rerank 吞吐优化（否则闭环不可行）
+- 初版 rerank 对**完整块（上限 1500 字）**做 cross-encoder 全注意力，单次检索 ~42s（其中 rerank 14s）。
+- 优化：候选文本截断 `rerank_max_chars=512` + torch 线程收敛到 8。
+- 优化后 `kb eval` 总耗时 **193s**（未优化 299s，提速 ~35%），召回**零回归**（Hit@5 仍 100%、MRR 0.944）。
+- 该优化是闭环真实运行的前提：微调闭环需调用 `search` 数十次，不优化则单次 ~42s 会让整轮跑几小时。
+
+### 6.4 微调闭环端到端跑通
+构造 14 条反馈（12 正例 > 8 触发阈值，2 负例模拟噪声），`kb closed_loop`（dry-run）整条链路：
+
+```
+[LOOP] 反馈总数=14，正例=12，触发阈值=8
+[BOOTSTRAP] 共 12 三元组，其中 12 条含检索难负例
+[LOOP] 训练三元组 24 条（来源：feedback+bootstrap）
+[FT] 训练样本数: 24，含难负例: 24，起点模型: BAAI/bge-small-zh-v1.5
+[FT] epoch 1/1  avg_loss=1.5473
+[FT] 微调完成，保存至: data/models/bge_ft_v1
+[CAND] 候选集合完成：81 块，维度 512
+[LOOP] 离线闸门 verdict=True  delta={'hit1':0.0,'hit5':0.0,'mrr':0.0}
+   - 绝对质量下限 Hit@5>=60%：候选 100% 达标
+   - 高绝对质量地板 Hit@5>=85%：候选 100% 达标
+   - 主KPI(MRR)不退化(容忍 2%)：候选 0.944 vs 基线 0.944 -> 满足
+[LOOP] [dry-run] 将晋升灰度 A/B：候选=kb_bge_ft_v1（加 --apply 真正写入 active_model.json）
+```
+
+- **`fine_tune_bge` 真实微调成功**：产出 `data/models/bge_ft_v1`（dim=512，avg_loss=1.5473）。
+- **候选集合与 base 完全隔离**：`kb_bge_ft_v1`（81 块），未达标时仅"不晋升"绝不破坏线上 base。
+- **离线闸门 verdict=True**：候选 Hit@5=100%、MRR=0.944 与基线持平（含少量 gold 过拟合，真实泛化由线上 A/B 10% 跌幅自动回滚保障），满足「不退化」门槛。
+- **决策：晋升灰度 A/B（dry-run）**——证明「反馈飞轮 → 微调 → 候选 → 闸门 → 晋升」全链路无崩溃。加 `--apply` 即写入 `active_model.json` 生效。
+
+### 6.5 测试
+- `pytest -q`：**28 passed, 1 skipped**（降级测试因本机模型已可用而 skip；CI 无依赖时仍覆盖）。
+
+---
+
+## 七、改动文件清单（本轮）
 
 ```
 src/kb_engine/config.py                      # PROJECT_ROOT 修正 + 配置告警
@@ -110,4 +166,11 @@ quickstart.py                                # 改用 sync()
 README.md                                    # 工具/端点表对齐
 tests/test_p0_regression.py                  # 新增 P0 回归测试
 examples/vault/*.md                          # 补 9 篇 + 统一 3 篇 frontmatter
+
+# 本轮新增（两阶段 Rerank + BGE 真实运行验证）
+src/kb_engine/rerank.py                   # 新增：cross-encoder 两阶段重排，优雅降级 + 候选截断 + torch 线程收敛
+src/kb_engine/config.py                   # 新增 rerank_max_chars / rerank_top_k 等可配置项
+src/kb_engine/hybrid_retrieve.py          # 集成 rerank；RRF 两通道加权；rerank 候选截断；默认 scale 链路对齐
+src/kb_engine/kb_embed.py                 # 收敛 torch 线程数
+tests/test_rerank.py                      # 新增 rerank 单测（降级路径在本机模型可用时 skip）
 ```

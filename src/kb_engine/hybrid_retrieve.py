@@ -115,6 +115,7 @@ class HybridRetriever:
         enable_rerank=None,
         rerank_model=None,
         rerank_top_k=None,
+        rerank_max_chars=None,
         vector_weight=None,
         bm25_weight=None,
     ):
@@ -127,6 +128,7 @@ class HybridRetriever:
         self._enable_rerank = settings.enable_rerank if enable_rerank is None else enable_rerank
         self._rerank_model = settings.rerank_model if rerank_model is None else rerank_model
         self._rerank_top_k = settings.rerank_top_k if rerank_top_k is None else rerank_top_k
+        self._rerank_max_chars = settings.rerank_max_chars if rerank_max_chars is None else rerank_max_chars
         self._vector_weight = settings.vector_weight if vector_weight is None else vector_weight
         self._bm25_weight = settings.bm25_weight if bm25_weight is None else bm25_weight
         self.embedder = None
@@ -213,7 +215,7 @@ class HybridRetriever:
             try:
                 from kb_engine.rerank import BgeReranker
 
-                self.reranker = BgeReranker(self._rerank_model)
+                self.reranker = BgeReranker(self._rerank_model, max_chars=self._rerank_max_chars)
             except Exception:
                 self.reranker = None
 

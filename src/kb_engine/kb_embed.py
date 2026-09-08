@@ -31,7 +31,14 @@ class BgeEmbedder:
         if self._model is None:
             os.environ["HF_HUB_OFFLINE"] = "1"
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            import torch
             from sentence_transformers import SentenceTransformer
+
+            # CPU 上收敛线程数，避免多核争用拖慢单条编码（查询侧高频调用）
+            try:
+                torch.set_num_threads(8)
+            except Exception:
+                pass
 
             # 关键：必须显式传 local_files_only=True！
             # 新版 sentence-transformers 会用构造函数参数覆盖 HF_HUB_OFFLINE 环境变量，

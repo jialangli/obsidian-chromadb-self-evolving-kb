@@ -45,6 +45,9 @@ DEFAULTS = {
     "enable_rerank": True,
     "rerank_model": "BAAI/bge-reranker-base",
     "rerank_top_k": 50,
+    # 喂给 cross-encoder 的候选文本截断长度（字符）。reranker 看的是 query-doc 语义交互，
+    # 块正文前段通常已含关键信号；截断可把 CPU 上 rerank 吞吐提升数倍，对排序质量影响极小。
+    "rerank_max_chars": 512,
     "chunk_size": 1500,
     "chunk_overlap": 200,
     # 服务

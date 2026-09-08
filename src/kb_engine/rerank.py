@@ -22,20 +22,25 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-base"
 RERANK_BATCH = 32
+# CPU 上 cross-encoder 推理收敛线程数：16 核全开反而因线程争用变慢，8 是常见甜点
+RERANK_NUM_THREADS = 8
 
 
 class BgeReranker:
     """惰性加载 bge-reranker-base cross-encoder；供 HybridRetriever 在 RRF 之后重排。"""
 
-    def __init__(self, model_name: str = DEFAULT_RERANK_MODEL, local_files_only: bool = True):
+    def __init__(self, model_name: str = DEFAULT_RERANK_MODEL, local_files_only: bool = True,
+                 max_chars: int = 512):
         self.model_name = model_name
         self._local_files_only = local_files_only
+        self.max_chars = max_chars
         self.model = None
         self.available = False
         self._try_load()
 
     def _try_load(self):
         try:
+            import torch
             from sentence_transformers import CrossEncoder
         except ImportError:
             # 加载器不在：静默降级，不打印，避免污染正常输出
@@ -45,6 +50,11 @@ class BgeReranker:
             # 与 BgeEmbedder 同样必须显式 local_files_only，避免离线环境仍去 HEAD 检查
             os.environ["HF_HUB_OFFLINE"] = "1"
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            # 收敛线程数，避免多核争用拖慢单条推理
+            try:
+                torch.set_num_threads(RERANK_NUM_THREADS)
+            except Exception:
+                pass
             self.model = CrossEncoder(
                 self.model_name,
                 device="cpu",
@@ -55,6 +65,10 @@ class BgeReranker:
             # 权重缺失或其他异常：降级为不可用，由调用方回退 RRF
             self.model = None
             self.available = False
+
+    @staticmethod
+    def _clip(text: str, n: int) -> str:
+        return text if len(text) <= n else text[:n]
 
     def rerank(self, query: str, docs: list, top_k: int = None) -> list:
         """对 docs 按与 query 的相关性重排。
@@ -70,7 +84,9 @@ class BgeReranker:
             return []
         import numpy as np
 
-        pairs = [(query, d) for d in docs]
+        # 截断候选文本：reranker 只需前段语义信号，长块截断后吞吐显著提升、排序几乎不变
+        clipped = [self._clip(d, self.max_chars) for d in docs]
+        pairs = [(query, d) for d in clipped]
         scores = np.asarray(self.model.predict(pairs, batch_size=RERANK_BATCH), dtype=float)
         order = np.argsort(-scores)
         if top_k is not None:

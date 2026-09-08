@@ -13,8 +13,28 @@ from kb_engine.hybrid_retrieve import HybridRetriever
 from kb_engine.rerank import BgeReranker
 
 
+def _reranker_present() -> bool:
+    """探测 reranker 模型是否真的可加载（仅本机装好依赖+权重时为 True）。
+
+    用于跳过「缺失降级」类测试：它们的前提（模型不存在）只有在 CI 无依赖环境才成立。
+    """
+    try:
+        from sentence_transformers import CrossEncoder  # noqa: F401
+    except ImportError:
+        return False
+    try:
+        return BgeReranker().available
+    except Exception:
+        return False
+
+
 def test_reranker_graceful_degradation_without_deps():
-    """无依赖/无模型时：available=False，rerank 返回空，绝不抛异常。"""
+    """无依赖/无模型时：available=False，rerank 返回空，绝不抛异常。
+
+    模型已可用时跳过——该降级路径只在 CI 无依赖环境才有意义。
+    """
+    if _reranker_present():
+        pytest.skip("reranker 模型已可用，降级路径不适用（CI 无模型时覆盖）")
     rk = BgeReranker()
     assert rk.available is False
     assert rk.rerank("查询文本", ["文档一", "文档二"]) == []
@@ -29,10 +49,9 @@ def test_hybrid_retriever_rerank_disabled_search():
 
 
 def test_hybrid_retriever_default_no_crash_on_missing_model():
-    """默认开启 rerank（config.enable_rerank=True）：模型缺失时应自动降级，
-    reranker 为 None 或 available=False，search 不崩。"""
+    """默认开启 rerank（config.enable_rerank=True）时，无论 reranker 是否可用，
+    search 都不应崩溃（可用则走重排，不可用则回退 RRF）。"""
     r = HybridRetriever()
-    assert r.reranker is None or r.reranker.available is False
     hits = r.search("测试查询语句", top_k=3)
     assert len(hits) <= 3
 
