@@ -10,8 +10,6 @@ kb-engine 统一 CLI 入口
     kb stats             # 知识库统计
 """
 
-from typing import Optional
-
 import typer
 
 from kb_engine import __version__
@@ -32,7 +30,7 @@ def version_callback(value: bool):
 
 @app.callback()
 def main(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None, "--version", "-V", callback=version_callback, is_eager=True, help="显示版本号"
     ),
 ):

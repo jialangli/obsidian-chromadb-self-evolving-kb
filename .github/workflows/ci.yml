@@ -39,7 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        # chromadb/scikit-learn 现代版本已不支持 Python <3.11（3.9/3.10 依赖解析失败）
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
 

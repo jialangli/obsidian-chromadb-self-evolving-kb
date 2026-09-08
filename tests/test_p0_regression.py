@@ -8,22 +8,15 @@ P0 回归测试：防止「README 上写着、实际跑不通」这类问题再�
 
 import subprocess
 import sys
+import tomllib  # Python >= 3.11（pyproject requires-python 已保证）
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib  # Python >= 3.11
-except ModuleNotFoundError:  # pragma: no cover - 3.9/3.10
-    tomllib = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _entry_points() -> dict:
-    # 3.11+ 才有 tomllib；3.9/3.10 上跳过该用例（pyproject 解析非核心路径）
-    if tomllib is None:  # pragma: no cover
-        pytest.skip("tomllib 仅 Python 3.11+ 可用，跳过 pyproject entry point 检查")
     with open(PROJECT_ROOT / "pyproject.toml", "rb") as f:
         return tomllib.load(f)["project"]["scripts"]
 

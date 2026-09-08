@@ -26,7 +26,6 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
-from typing import Optional
 
 import chromadb
 import uvicorn
@@ -115,17 +114,17 @@ def get_hybrid():
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, description="自然语言查询")
     top_k: int = Field(5, ge=1, le=50, description="返回结果数")
-    memory_type: Optional[str] = Field(
+    memory_type: str | None = Field(
         None, description="过滤：fact/preference/experience/safety/task_state/navigation"
     )
-    source_file: Optional[str] = Field(None, description="过滤：来源文件相对路径（支持部分匹配）")
+    source_file: str | None = Field(None, description="过滤：来源文件相对路径（支持部分匹配）")
 
 
 class FilterRequest(BaseModel):
-    memory_type: Optional[str] = Field(None, description="按治理类型过滤")
-    status: Optional[str] = Field(None, description="按状态过滤")
-    source_file: Optional[str] = Field(None, description="按来源文件过滤（部分匹配）")
-    contains: Optional[str] = Field(None, description="正文关键词包含")
+    memory_type: str | None = Field(None, description="按治理类型过滤")
+    status: str | None = Field(None, description="按状态过滤")
+    source_file: str | None = Field(None, description="按来源文件过滤（部分匹配）")
+    contains: str | None = Field(None, description="正文关键词包含")
     limit: int = Field(50, ge=1, le=500)
 
 
