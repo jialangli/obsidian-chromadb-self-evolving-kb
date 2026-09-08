@@ -2,7 +2,8 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/jialangli/obsidian-chromadb-self-evolving-kb/ci.yml?branch=master&label=CI&logo=github)](https://github.com/jialangli/obsidian-chromadb-self-evolving-kb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/jialangli/obsidian-chromadb-self-evolving-kb?color=blue)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Release](https://img.shields.io/github/v/release/jialangli/obsidian-chromadb-self-evolving-kb?sort=semver&color=green&label=release)](https://github.com/jialangli/obsidian-chromadb-self-evolving-kb/releases)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![GitHub stars](https://img.shields.io/github/stars/jialangli/obsidian-chromadb-self-evolving-kb?style=social)](https://github.com/jialangli/obsidian-chromadb-self-evolving-kb/stargazers)
@@ -225,7 +226,7 @@ obsidian-chromadb-self-evolving-kb/
 | 兜底嵌入 | LSA (TF-IDF + SVD) | 纯离线可用，零模型依赖 |
 | 检索策略 | BGE + BM25 → RRF | 双通道融合 |
 | 服务层 | MCP Server + FastAPI | 双协议出口 |
-| 运行时 | Python 3.9+ | 纯本地，零云依赖 |
+| 运行时 | Python 3.11+ | 纯本地，零云依赖 |
 
 ## 配置说明
 
@@ -313,7 +314,8 @@ pytest --cov=kb_engine --cov-report=term-missing
 项目使用 GitHub Actions 持续集成，每次 push 和 PR 都会自动运行：
 
 - **Lint**：black + isort + ruff 格式检查
-- **Test**：Python 3.9 / 3.10 / 3.11 / 3.12 多版本测试
+- **Test**：Python 3.11 / 3.12 / 3.13 多版本测试
+- **Retrieval gate**：真实 sync + 检索评估，Hit@5 ≥ 85% 才放行
 
 配置文件：`.github/workflows/ci.yml`
 
