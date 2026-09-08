@@ -29,8 +29,12 @@ RERANK_NUM_THREADS = 8
 class BgeReranker:
     """惰性加载 bge-reranker-base cross-encoder；供 HybridRetriever 在 RRF 之后重排。"""
 
-    def __init__(self, model_name: str = DEFAULT_RERANK_MODEL, local_files_only: bool = True,
-                 max_chars: int = 512):
+    def __init__(
+        self,
+        model_name: str = DEFAULT_RERANK_MODEL,
+        local_files_only: bool = True,
+        max_chars: int = 512,
+    ):
         self.model_name = model_name
         self._local_files_only = local_files_only
         self.max_chars = max_chars

@@ -107,8 +107,10 @@ def main(argv: list = None):
         print(f"RRF+rerank Hit@5 : {b[1]}/{len(CASES)}  (MRR {b[2]:.3f})")
         print(f"Rerank 增益 Hit@5: {(b[1]-c[1])*100//len(CASES):+d}%   MRR {b[2]-c[2]:+.3f}")
     else:
-        print("\n[提示] reranker 未启用/不可用（sentence_transformers 未安装或模型未下载），"
-              "本次仅评估 RRF；装好依赖后重跑可看到两阶段重排增益。")
+        print(
+            "\n[提示] reranker 未启用/不可用（sentence_transformers 未安装或模型未下载），"
+            "本次仅评估 RRF；装好依赖后重跑可看到两阶段重排增益。"
+        )
 
 
 if __name__ == "__main__":

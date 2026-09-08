@@ -32,13 +32,17 @@ cd obsidian-chromadb-self-evolving-kb
 # 2. 安装（推荐开发模式）
 pip install -e ".[dev]"
 
+# （可选）启用 BGE 神经语义 + 两阶段 Rerank：
+#   pip install -e ".[bge]"      # 会装 sentence-transformers（连带 torch，体积较大）
+#   未装时自动降级为 LSA / 纯 RRF，功能完整可用。
+
 # 3. 一键运行快速入门（自动构建示例索引 + 演示检索）
 python quickstart.py
 ```
 
 就是这么简单！`quickstart.py` 会用 `examples/vault/` 下的示例笔记构建 LSA 向量索引（无需下载任何模型），然后演示混合检索效果。
 
-> 也可以用 `pip install -r requirements.txt` 只装运行时依赖。
+> 也可以用 `pip install -r requirements.txt` 只装运行时依赖（不含 BGE/rerank）。
 
 ### 接入你自己的知识库
 

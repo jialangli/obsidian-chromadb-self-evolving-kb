@@ -18,7 +18,6 @@ Knowledge 知识库体检脚本
 
 import argparse
 import re
-import sys
 from datetime import date
 from pathlib import Path
 
@@ -189,7 +188,9 @@ def run_audit(
                 "navigation": 180,
             }.get(mt, 180)
             if days > threshold:
-                issues["B"].append((rel, f"已 {days} 天未更新（超过 {mt} 类型阈值 {threshold} 天）"))
+                issues["B"].append(
+                    (rel, f"已 {days} 天未更新（超过 {mt} 类型阈值 {threshold} 天）")
+                )
 
     # ── C. 断链检查 ──────────────────────────────────────
     for p, post in parsed:

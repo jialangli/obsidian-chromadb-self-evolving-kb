@@ -19,6 +19,9 @@ lsa_model_path: "./data/chroma/lsa_model.pkl"
 # TF-IDF 向量化器路径
 tfidf_vectorizer_path: "./data/chroma/tfidf_vectorizer.pkl"
 
+# BM25 磁盘倒排库路径（倒排驻留 SQLite，进程不占内存；data/ 已被 .gitignore 排除）
+bm25_db_path: "./data/chroma/bm25.db"
+
 # 反馈日志路径
 feedback_log: "./data/logs/feedback.jsonl"
 
@@ -46,6 +49,15 @@ top_k: 10              # 返回结果数量
 rrf_k: 60              # RRF 融合参数
 chunk_size: 1500       # 分块大小（字符）
 chunk_overlap: 200     # 分块重叠（字符）
+
+# ── 两阶段 Rerank ─────────────────────────────────────
+# RRF Top-N 后经 cross-encoder 重排再取 top_k；未装 [bge] 依赖时自动降级为纯 RRF。
+enable_rerank: true
+rerank_model: "BAAI/bge-reranker-base"
+rerank_top_k: 50              # 进入 rerank 的候选数
+rerank_max_chars: 512         # 喂给 cross-encoder 的候选文本截断（字符），CPU 提速关键
+vector_weight: 1.0            # RRF 向量通道权重
+bm25_weight: 1.0              # RRF 关键词通道权重
 
 # ── 服务参数 ──────────────────────────────────────────
 api_host: "127.0.0.1"

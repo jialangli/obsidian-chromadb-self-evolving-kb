@@ -53,7 +53,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # 核心依赖 + dev；sentence-transformers/torch 走可选 [bge]，测试走 LSA 降级路径
           pip install -e ".[dev]"
+
+      - name: Build index (kb sync --full, LSA 降级模式)
+        # 测试类依赖真实 chroma 集合（test_rerank 等会实例化 HybridRetriever）。
+        # 干净 checkout 没有 data/ —— 必须先同步示例 Vault 建集合，否则测试全崩。
+        run: |
+          python -m kb_engine.sync_obsidian_to_chroma --full
 
       - name: Run tests
         run: pytest -v --cov=kb_engine --cov-report=term-missing
@@ -63,3 +70,48 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           fail_ci_if_error: false
+
+  retrieval-gate:
+    name: Retrieval gate (sync + eval, Hit@5 >= 85%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build index (kb sync --full)
+        run: python -m kb_engine.sync_obsidian_to_chroma --full
+
+      - name: Run retrieval evaluation
+        # 评估崩溃（非零退出）会直接让本步红；命中率不达标由下一步闸门拦截
+        run: python -m kb_engine.eval_retrieval > /tmp/kb_eval.log 2>&1
+
+      - name: Gate — Hit@5 >= 85%（评估集 gold 全部可达）
+        run: |
+          python - <<'PY'
+          import re
+          out = open("/tmp/kb_eval.log", encoding="utf-8").read()
+          # evaluate() 输出形如 "Hit@5 = 12/12 = 100%"。本闸门环境无 reranker，
+          # 恰好两条 Hit@5：改造前 LSA、改造后混合管线（改造后即最后一条）。
+          matches = re.findall(r"Hit@5 = (\d+)/(\d+)", out)
+          assert len(matches) >= 2, (
+              f"评估未完整跑完（只找到 {len(matches)} 条 Hit@5，需要 ≥2 条），"
+              f"改造后管线疑似中断：\n{out[-3000:]}"
+          )
+          hit5, total = map(int, matches[-1])
+          print(f"gate: 改造后 Hit@5 = {hit5}/{total} = {hit5 / total:.0%}")
+          assert hit5 / total >= 0.85, (
+              f"❌ Hit@5 未达闸门 85%：{hit5}/{total}\n{out[-3000:]}"
+          )
+          print("✅ Hit@5 >= 85%，检索质量闸门通过")
+          PY

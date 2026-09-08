@@ -48,10 +48,10 @@ except ImportError:  # MCP SDK v1.x
     from mcp.server.fastmcp import FastMCP as MCPServer
 
 import kb_engine.closed_loop_config as cfg  # noqa: N812
-from kb_engine.config import settings
 
 # 自进化闭环：A/B 灰度路由 + 按臂打 model_version 标签
 import kb_engine.closed_loop_runtime as closed_loop_runtime
+from kb_engine.config import settings
 from kb_engine.sync_obsidian_to_chroma import (
     CHROMA_PATH,
     COLLECTION_NAME,
@@ -63,6 +63,7 @@ from kb_engine.sync_obsidian_to_chroma import (
 # 注意：MCP 写入的反馈必须与闭环读取的是同一个文件，否则飞轮断链。
 TRACE_PATH = cfg.TRACE_PATH
 FEEDBACK_PATH = cfg.FEEDBACK_PATH
+
 
 def _call_with_fallback(fn, kwargs: dict, order: tuple):
     """
@@ -119,6 +120,7 @@ def _tool(**kwargs):
         )(fn)
 
     return deco
+
 
 # ── 懒加载全局状态 ────────────────────────────────────
 # 注意：同步脚本用 --full 会删除并重建 collection，磁盘上的模型文件也会被覆盖。

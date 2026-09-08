@@ -6,18 +6,24 @@ P0 回归测试：防止「README 上写着、实际跑不通」这类问题再�
 这里既检查可导入性，也检查可调用性和配置一致性。
 """
 
-import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib  # Python >= 3.11
+except ModuleNotFoundError:  # pragma: no cover - 3.9/3.10
+    tomllib = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _entry_points() -> dict:
+    # 3.11+ 才有 tomllib；3.9/3.10 上跳过该用例（pyproject 解析非核心路径）
+    if tomllib is None:  # pragma: no cover
+        pytest.skip("tomllib 仅 Python 3.11+ 可用，跳过 pyproject entry point 检查")
     with open(PROJECT_ROOT / "pyproject.toml", "rb") as f:
         return tomllib.load(f)["project"]["scripts"]
 
@@ -67,9 +73,9 @@ def test_project_root_points_to_repo_root():
     """PROJECT_ROOT 曾少算一层 parent，导致 config.yaml 静默失效"""
     from kb_engine.config import PROJECT_ROOT as CFG_ROOT
 
-    assert CFG_ROOT.resolve() == PROJECT_ROOT.resolve(), (
-        f"PROJECT_ROOT 指向 {CFG_ROOT}，应为仓库根 {PROJECT_ROOT}"
-    )
+    assert (
+        CFG_ROOT.resolve() == PROJECT_ROOT.resolve()
+    ), f"PROJECT_ROOT 指向 {CFG_ROOT}，应为仓库根 {PROJECT_ROOT}"
     assert (CFG_ROOT / "pyproject.toml").exists()
     # README 让用户把 config.yaml 放项目根，代码也必须去那里找
     assert (CFG_ROOT / "examples" / "vault").exists()
@@ -106,14 +112,12 @@ def test_closed_loop_paths_are_portable():
     override = os.environ.get("KB_ROOT")
     for name in ("KB_ROOT", "LOGS", "MODELS_DIR", "FEEDBACK_PATH", "TRACE_PATH"):
         value = Path(str(getattr(cfg, name)))
-        assert "kb-engine" not in value.parts or override, (
-            f"{name} 疑似硬编码了本机路径: {value}"
-        )
+        assert "kb-engine" not in value.parts or override, f"{name} 疑似硬编码了本机路径: {value}"
         if not override:
             # 未用 KB_ROOT 覆盖时，必须落在项目根之下（即随仓库迁移）
-            assert str(PROJECT_ROOT.resolve()) in str(value.resolve()), (
-                f"{name} 未派生自项目根: {value}"
-            )
+            assert str(PROJECT_ROOT.resolve()) in str(
+                value.resolve()
+            ), f"{name} 未派生自项目根: {value}"
 
 
 def test_closed_loop_uses_same_collection_as_sync():

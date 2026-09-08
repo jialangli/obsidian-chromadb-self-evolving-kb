@@ -148,7 +148,30 @@
 
 ---
 
-## 七、改动文件清单（本轮）
+## 七、第二轮收尾：灰度实跑 / CI 闸门 / BM25 磁盘倒排
+
+### 7.1 微调闭环 `--apply` 真实晋升灰度
+- dry-run 验证决策逻辑后，实跑 `closed_loop --apply`：反馈 14 条（12 正例）→ 24 三元组 → 微调 `bge_ft_v1` → 候选 `kb_bge_ft_v1` → 离线闸门 `verdict=True` → **✅ 已晋升灰度 A/B（候选=kb_bge_ft_v1，流量=20%）**。
+- `data/logs/active_model.json` 真实写入 `ab.enabled=true`；闭环运行日志落 `closed_loop_runs.jsonl`（`action=promote_to_ab, applied=true`）。重启 MCP/API 后即按 `traffic_ratio=0.2` 分流到候选集合。
+
+### 7.2 CI 真闸门（pytest + sync + eval）
+- **pyproject 依赖瘦身**：`sentence-transformers` / `huggingface-hub` 从必需依赖移到可选 extra `[bge]`（代码本就优雅降级；此前 CI 装 `.[dev]` 会连带拉 torch >2GB）。安装改为 `pip install -e ".[dev]"`（核心+测试）或 `pip install -e ".[bge]"`（BGE/rerank）。
+- **test job**：新增「先 `kb sync --full` 建索引」步骤——`test_rerank` 等会实例化 `HybridRetriever`，干净 checkout 没有 data/，不同步必然全崩（旧 CI 从未真绿）。
+- **新增 retrieval-gate job**：`sync --full` → `kb eval` → 内联 Python 断言**改造后 Hit@5 ≥ 85%**；评估中途崩溃（日志不足两条 Hit@5）直接判红，杜绝「只测了 LSA 基线」假绿。
+- **lint 存量清零**：全库 `black --check` / `isort` / `ruff` 复检通过（修掉 kb_audit 未用 `sys`、kb_mcp_server 导入序、3 文件 black 重排）。
+- 兼容性：`test_p0_regression` 的 `tomllib` 仅在 py≥3.11 导入（3.9/3.10 自动 skip），未用 `re` 移除——保证 4 版本矩阵可收集。
+
+### 7.3 BM25 磁盘倒排（解决大 vault 内存压力）
+- 新增 `DiskBM25Index`（`hybrid_retrieve.py`）：SQLite 三表持久化倒排（`terms` 词频 / `postings` 倒排 / `docs` 长度 + `meta` 语料摘要），进程**不保留任何词条结构**，查询只拉命中查询词的倒排链（主键索引），常驻内存从 O(全部词条数) 降到 O(1)。
+- **公式与内存版逐位一致**：同 k1/b/平滑 idf，doc length 经 JOIN `docs` 取回 → 排序完全相同（新单测 4 项断言：与 `BM25Index` 排序一致、语料未变不重建、语料变化重建、空语料）。
+- 构建失效：`meta.corpus_digest`（流式 SHA-256）不匹配才重建，检索器每次 `_load` 复用既有库。
+- 落盘：`data/chroma/bm25.db`（配置 `bm25_db_path`，已被 data/ 忽略规则覆盖，不进仓库）。
+- **真实数据验证零回归**：BGE+BM25(disk)+RRF+rerank Hit@5=100% / MRR=0.944（与内存版完全一致）；LSA-only CI 同构仿真（临时干净目录）同步+评估同样通过。
+- 测试套件：**32 passed, 1 skipped**。
+
+---
+
+## 八、改动文件清单（本轮）
 
 ```
 src/kb_engine/config.py                      # PROJECT_ROOT 修正 + 配置告警
@@ -173,4 +196,16 @@ src/kb_engine/config.py                   # 新增 rerank_max_chars / rerank_top
 src/kb_engine/hybrid_retrieve.py          # 集成 rerank；RRF 两通道加权；rerank 候选截断；默认 scale 链路对齐
 src/kb_engine/kb_embed.py                 # 收敛 torch 线程数
 tests/test_rerank.py                      # 新增 rerank 单测（降级路径在本机模型可用时 skip）
+
+# 第二轮（CI 闸门 + BM25 磁盘倒排 + 灰度实跑）
+pyproject.toml                                # sentence-transformers/hf-hub 移至可选 [bge] extra
+.github/workflows/ci.yml                      # test job 先 sync；新增 retrieval-gate（Hit@5>=85%）
+src/kb_engine/hybrid_retrieve.py              # 新增 DiskBM25Index（SQLite 磁盘倒排，接口与内存版一致）
+src/kb_engine/config.py                       # 新增 bm25_db_path
+tests/test_disk_bm25.py                       # 新增：磁盘 vs 内存逐位一致 / 失效重建 / 空语料
+tests/test_p0_regression.py                   # tomllib 兼容 3.9/3.10；移除未用 re
+src/kb_engine/kb_audit.py                     # lint：移除未用 sys（black 重排）
+src/kb_engine/kb_mcp_server.py                # lint：first-party 导入序修正（black 重排）
+src/kb_engine/eval_retrieval.py               # lint：black 重排
+FIX_REPORT.md                                 # 第七节：灰度实跑/CI/磁盘 BM25 记录
 ```

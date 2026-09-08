@@ -25,6 +25,7 @@ DEFAULTS = {
     "log_path": str(PROJECT_ROOT / "data" / "logs"),
     "lsa_model_path": str(PROJECT_ROOT / "data" / "chroma" / "lsa_model.pkl"),
     "tfidf_vectorizer_path": str(PROJECT_ROOT / "data" / "chroma" / "tfidf_vectorizer.pkl"),
+    "bm25_db_path": str(PROJECT_ROOT / "data" / "chroma" / "bm25.db"),
     "feedback_log": str(PROJECT_ROOT / "data" / "logs" / "feedback.jsonl"),
     "trace_log": str(PROJECT_ROOT / "data" / "logs" / "mcp_trace.jsonl"),
     "active_model_file": str(PROJECT_ROOT / "data" / "logs" / "active_model.json"),

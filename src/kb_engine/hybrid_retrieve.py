@@ -4,7 +4,7 @@ Knowledge 知识库 混合检索模块 (Hybrid Retriever)
 将原本「单一 LSA 向量排序」升级为「向量 + 关键词」混合召回，RRF 融合。
 
   - 向量通道：优先用 bge-small-zh-v1.5 神经语义向量（kb-engine_bge 集合），模型/库缺失时回退 LSA
-  - 关键词通道：纯 Python 实现的 Okapi BM25，对 chunk 全文现建内存索引
+  - 关键词通道：Okapi BM25，SQLite 磁盘倒排（DiskBM25Index），大库不占内存
   - 融合：Reciprocal Rank Fusion (RRF)，k=60，兼顾语义泛化与专有名词精确匹配
 
 设计目标：可回退（bge 不可用时自动降级为 LSA 混合）。
@@ -20,12 +20,16 @@ Knowledge 知识库 混合检索模块 (Hybrid Retriever)
                  similarity, bm25, excerpt}
 """
 
+import hashlib
 import math
+import sqlite3
 from pathlib import Path
 
 import chromadb
 import numpy as np
 
+# ── 可调参数 ──────────────────────────────────────────
+from kb_engine.config import settings  # 复用全局配置（rrf_k / 通道权重 / rerank 开关）
 from kb_engine.sync_obsidian_to_chroma import (
     CHROMA_PATH,
     COLLECTION_NAME,
@@ -35,9 +39,6 @@ from kb_engine.sync_obsidian_to_chroma import (
     tokenize_zh,
 )
 
-# ── 可调参数 ──────────────────────────────────────────
-from kb_engine.config import settings  # 复用全局配置（rrf_k / 通道权重 / rerank 开关）
-
 BM25_K1 = 1.5
 BM25_B = 0.75
 RRF_K = settings.rrf_k  # RRF 常数 k，可经 config.yaml / KB_RRF_K 覆盖
@@ -45,6 +46,7 @@ VECTOR_WEIGHT = settings.vector_weight  # 向量通道融合权重
 BM25_WEIGHT = settings.bm25_weight  # 关键词通道融合权重
 CANDIDATE_POOL = 50  # 每个通道取前 N 个候选进入融合
 QUERY_EXCERPT_LEN = 200
+BM25_DB_PATH = settings.bm25_db_path  # 磁盘倒排库位置（config.bm25_db_path，可覆盖）
 
 
 def _norm_query(query: str) -> str:
@@ -95,6 +97,160 @@ class BM25Index:
         return ranked
 
 
+class DiskBM25Index:
+    """SQLite 磁盘倒排的 Okapi BM25 —— 接口与 BM25Index 完全一致，倒排驻留磁盘。
+
+    与内存版的差异只在存储位置：倒排表（term → [(docid, freq)]）写入 SQLite
+    `postings` 表，文档长度放 `docs` 表、词频统计放 `terms` 表；
+    进程内存里**不保留任何倒排结构**，查询时仅拉取「命中查询词」的倒排链
+    （SELECT ... WHERE term=?，走主键索引）。
+
+    效果：进程常驻内存从 O(全部词条数) 降到 O(1)（只有库路径一个引用），
+    大 vault（数十万 chunk）不再因 BM25 倒排吃掉 GB 级内存；索引本体走磁盘。
+
+    正确性保证：
+      - 打分公式与 BM25Index 逐位一致（同一套 k1/b/平滑 idf，doc length 经
+        JOIN docs 表取回），对同一语料排序结果完全相同 —— 有单测断言两者一致。
+      - 构建按语料签名失效重建：meta 里存 corpus_digest，库文件缺失或摘要不一致
+        才重建；否则直接复用（检索器每次 _load 都不会重复建库）。
+      - docid 即 corpus 下标，保证并列分数按 doc 序确定。
+    """
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS terms(
+            term TEXT PRIMARY KEY,
+            df   INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS postings(
+            term  TEXT NOT NULL,
+            docid INTEGER NOT NULL,
+            freq  INTEGER NOT NULL,
+            PRIMARY KEY(term, docid)
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS docs(
+            docid  INTEGER PRIMARY KEY,
+            length INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS meta(
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        ) WITHOUT ROWID;
+    """
+
+    def __init__(self, corpus_tokens: list, db_path=None):
+        self.n_docs = len(corpus_tokens)
+        self.avgdl = 0.0
+        if corpus_tokens:
+            lens = [len(t) for t in corpus_tokens]
+            self.avgdl = sum(lens) / len(lens)
+        self.db_path = Path(db_path or BM25_DB_PATH)
+        if str(self.db_path) != ":memory:":
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        digest = self._corpus_digest(corpus_tokens)
+        stale = True
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            conn.executescript(self._SCHEMA)
+            meta = self._load_meta(conn)
+            if meta.get("corpus_digest") == digest and int(meta.get("n_docs", -1)) == self.n_docs:
+                stale = False
+        except sqlite3.Error:
+            stale = True
+        finally:
+            conn.close()
+        if stale:
+            self._rebuild(corpus_tokens, digest)
+
+    # ── 构建 ──────────────────────────────────────────
+    @staticmethod
+    def _corpus_digest(corpus_tokens: list) -> str:
+        """语料指纹：流式哈希全部 token（不拼接大字符串），用于失效检测。"""
+        h = hashlib.sha256()
+        for toks in corpus_tokens:
+            for tok in toks:
+                h.update(tok.encode("utf-8", errors="ignore"))
+                h.update(b"\x00")
+            h.update(b"\x01")
+        return h.hexdigest()
+
+    @staticmethod
+    def _load_meta(conn) -> dict:
+        try:
+            return {key: value for key, value in conn.execute("SELECT key, value FROM meta")}
+        except sqlite3.Error:
+            return {}
+
+    def _rebuild(self, corpus_tokens: list, digest: str) -> None:
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            conn.executescript(
+                "DROP TABLE IF EXISTS postings;"
+                "DROP TABLE IF EXISTS terms;"
+                "DROP TABLE IF EXISTS docs;"
+                "DROP TABLE IF EXISTS meta;"
+            )
+            conn.executescript(self._SCHEMA)
+            cur = conn.cursor()
+            cur.execute("BEGIN")
+            for i, toks in enumerate(corpus_tokens):
+                cur.execute("INSERT INTO docs(docid, length) VALUES (?, ?)", (i, len(toks)))
+                tf = {}
+                for tok in toks:
+                    tf[tok] = tf.get(tok, 0) + 1
+                for tok, freq in tf.items():
+                    cur.execute(
+                        "INSERT INTO postings(term, docid, freq) VALUES (?, ?, ?)",
+                        (tok, i, freq),
+                    )
+            # term 词频统计：df = 含该 term 的文档数
+            cur.execute(
+                "INSERT INTO terms(term, df) " "SELECT term, COUNT(*) FROM postings GROUP BY term"
+            )
+            cur.execute("INSERT INTO meta(key, value) VALUES ('corpus_digest', ?)", (digest,))
+            cur.execute("INSERT INTO meta(key, value) VALUES ('n_docs', ?)", (str(self.n_docs),))
+            cur.execute("INSERT INTO meta(key, value) VALUES ('avgdl', ?)", (str(self.avgdl),))
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # ── 查询 ──────────────────────────────────────────
+    def score(self, query_tokens: list) -> list:
+        """返回 [(doc_idx, score), ...]，只含命中至少一个查询词的文档。
+
+        只拉取查询词对应的倒排链（terms/postings 均走主键索引），文档长度经
+        JOIN docs 取回 —— 内存占用与语料规模无关。
+        """
+        if self.n_docs <= 0 or not query_tokens:
+            return []
+        scores = {}
+        conn = sqlite3.connect(str(self.db_path))
+        try:
+            for tok in set(query_tokens):
+                row = conn.execute("SELECT df FROM terms WHERE term = ?", (tok,)).fetchone()
+                if row is None:
+                    continue
+                df = row[0]
+                idf = math.log(1 + (self.n_docs - df + 0.5) / (df + 0.5))
+                for docid, freq, length in conn.execute(
+                    "SELECT p.docid, p.freq, d.length FROM postings p "
+                    "JOIN docs d ON d.docid = p.docid WHERE p.term = ?",
+                    (tok,),
+                ):
+                    dl = length or 1
+                    denom = BM25_K1 * (1 - BM25_B + BM25_B * dl / (self.avgdl or 1))
+                    scores[docid] = scores.get(docid, 0.0) + idf * (freq * (BM25_K1 + 1)) / (
+                        freq + denom
+                    )
+        finally:
+            conn.close()
+        ranked = [(i, s) for i, s in scores.items() if s > 0]
+        ranked.sort(key=lambda x: (-x[1], x[0]))
+        return ranked
+
+
 class HybridRetriever:
     """加载 LSA 模型与 collection，构建 BM25，提供混合检索。
 
@@ -128,7 +284,9 @@ class HybridRetriever:
         self._enable_rerank = settings.enable_rerank if enable_rerank is None else enable_rerank
         self._rerank_model = settings.rerank_model if rerank_model is None else rerank_model
         self._rerank_top_k = settings.rerank_top_k if rerank_top_k is None else rerank_top_k
-        self._rerank_max_chars = settings.rerank_max_chars if rerank_max_chars is None else rerank_max_chars
+        self._rerank_max_chars = (
+            settings.rerank_max_chars if rerank_max_chars is None else rerank_max_chars
+        )
         self._vector_weight = settings.vector_weight if vector_weight is None else vector_weight
         self._bm25_weight = settings.bm25_weight if bm25_weight is None else bm25_weight
         self.embedder = None
@@ -205,7 +363,8 @@ class HybridRetriever:
             src = (meta or {}).get("source_file", "")
             fn = (meta or {}).get("filename", "")
             corpus.append(_norm_query(f"{src} {fn} {d or ''}"))
-        self.bm25 = BM25Index(corpus)
+        # 磁盘倒排：倒排驻留 SQLite，进程不保留词条结构（公式与内存版 BM25Index 一致）
+        self.bm25 = DiskBM25Index(corpus)
 
         # 两阶段重排：在 RRF 之后用 cross-encoder 重排候选。
         # 无 sentence_transformers 或模型未下载时自动降级（available=False），
@@ -279,14 +438,17 @@ class HybridRetriever:
     def _search_bm25(self, query: str, where: dict, pool: int) -> dict:
         """关键词通道。Returns: {chunk_id: (rank, bm25_score)}"""
         qt = _norm_query(query)
-        flat = [
-            (di, sc) for di, sc in self.bm25.score(qt) if self._match(self.metas[di], where)
-        ]
+        flat = [(di, sc) for di, sc in self.bm25.score(qt) if self._match(self.metas[di], where)]
         return {self.ids[di]: (rank, sc) for rank, (di, sc) in enumerate(flat[:pool])}
 
     @staticmethod
-    def _rrf_fuse(vec_rank: dict, kw_rank: dict, rrf_k: float = RRF_K,
-                  vec_w: float = VECTOR_WEIGHT, kw_w: float = BM25_WEIGHT) -> dict:
+    def _rrf_fuse(
+        vec_rank: dict,
+        kw_rank: dict,
+        rrf_k: float = RRF_K,
+        vec_w: float = VECTOR_WEIGHT,
+        kw_w: float = BM25_WEIGHT,
+    ) -> dict:
         """RRF 融合（支持向量/关键词通道加权）。
 
         Returns: {chunk_id: [rrf_score, sim_or_None, bm25_or_None]}
@@ -318,14 +480,19 @@ class HybridRetriever:
 
         vec_rank = {} if bm25_only else self._search_vector(query, where, pool)
         kw_rank = {} if vector_only else self._search_bm25(query, where, pool)
-        fused = self._rrf_fuse(vec_rank, kw_rank, rrf_k=RRF_K,
-                               vec_w=self._vector_weight, kw_w=self._bm25_weight)
+        fused = self._rrf_fuse(
+            vec_rank, kw_rank, rrf_k=RRF_K, vec_w=self._vector_weight, kw_w=self._bm25_weight
+        )
 
         ranked = sorted(fused.items(), key=lambda kv: kv[1][0], reverse=True)
         # 两阶段重排：RRF 前 N 个候选 → cross-encoder 打分 → Top-K。
         # 仅当 reranker 可用且候选多于所需时介入；否则直接返回 RRF 结果。
-        if (self._enable_rerank and self.reranker is not None and self.reranker.available
-                and len(ranked) > top_k):
+        if (
+            self._enable_rerank
+            and self.reranker is not None
+            and self.reranker.available
+            and len(ranked) > top_k
+        ):
             cand = ranked[: self._rerank_top_k]
             cand_ids = [cid for cid, _ in cand]
             cand_docs = [self.docs[self._id_pos[cid]] for cid in cand_ids]

@@ -7,6 +7,7 @@
 注：本环境（纯 LSA 降级模式）未装 sentence_transformers，reranker 走降级分支。
 装好依赖后重跑，会额外覆盖「rerank 实际生效」路径（见 test_p0_regression 不覆盖）。
 """
+
 import pytest
 
 from kb_engine.hybrid_retrieve import HybridRetriever
